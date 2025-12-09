@@ -1,4 +1,4 @@
-# CDP Node.js Backend Template
+# aqie-alert-back-end-service
 
 Core delivery platform Node.js Backend Template.
 
@@ -36,7 +36,7 @@ easier to use the Node Version Manager [nvm](https://github.com/creationix/nvm)
 To use the correct version of Node.js for this application, via nvm:
 
 ```bash
-cd cdp-node-backend-template
+cd aqie-alert-back-end-service
 nvm use
 ```
 
@@ -186,13 +186,13 @@ return await fetch(url, {
 Build:
 
 ```bash
-docker build --target development --no-cache --tag cdp-node-backend-template:development .
+docker build --target development --no-cache --tag aqie-alert-back-end-service:development .
 ```
 
 Run:
 
 ```bash
-docker run -e PORT=3001 -p 3001:3001 cdp-node-backend-template:development
+docker run -e PORT=3001 -p 3001:3001 aqie-alert-back-end-service:development
 ```
 
 ### Production image
@@ -200,13 +200,13 @@ docker run -e PORT=3001 -p 3001:3001 cdp-node-backend-template:development
 Build:
 
 ```bash
-docker build --no-cache --tag cdp-node-backend-template .
+docker build --no-cache --tag aqie-alert-back-end-service .
 ```
 
 Run:
 
 ```bash
-docker run -e PORT=3001 -p 3001:3001 cdp-node-backend-template
+docker run -e PORT=3001 -p 3001:3001 aqie-alert-back-end-service
 ```
 
 ### Docker Compose

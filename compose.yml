@@ -65,7 +65,7 @@ services:
   #   networks:
   #     - cdp-tenant
 
-  cdp-node-backend-template:
+  aqie-alert-back-end-service:
     build:
       context: .
       target: development
