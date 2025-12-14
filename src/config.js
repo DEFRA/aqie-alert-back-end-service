@@ -119,6 +119,28 @@ const config = convict({
     default: null,
     env: 'HTTP_PROXY'
   },
+  notification: {
+    serviceUrl: {
+      doc: 'Notification service URL',
+      format: String,
+      default: 'http://localhost:3000/send-notification',
+      env: 'NOTIFICATION_SERVICE_URL'
+    },
+    templates: {
+      smsSetUpConfirmation: {
+        doc: 'SMS notification template ID',
+        format: String,
+        default: '73244097-acce-4e7b-84f2-3ddcd0e70fb5',
+        env: 'SMS_SET_UP_CONFIRMATION_TEMPLATE_ID'
+      },
+      emailSetUpConfirmation: {
+        doc: 'Email notification template ID',
+        format: String,
+        default: 'email-template-id',
+        env: 'EMAIL_SET_UP_CONFIRMATION_TEMPLATE_ID'
+      }
+    }
+  },
   isMetricsEnabled: {
     doc: 'Enable metrics reporting',
     format: Boolean,

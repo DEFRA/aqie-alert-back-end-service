@@ -1,18 +1,29 @@
 import { afterAll, beforeAll } from 'vitest'
-import { setup, teardown } from 'vitest-mongodb'
+import { MongoMemoryServer } from 'mongodb-memory-server'
+
+let mongoServer
 
 beforeAll(async () => {
-  // Setup mongo mock
-  await setup({
+  // Setup mongo mock with increased timeout for Windows
+  mongoServer = await MongoMemoryServer.create({
     binary: {
-      version: 'latest'
+      version: '6.0.0',
+      downloadDir: './mongodb-binaries'
     },
-    serverOptions: {},
-    autoStart: false
+    instance: {
+      port: 27017,
+      dbName: 'test',
+      launchTimeout: 120000 // 2 minutes
+    }
   })
-  process.env.MONGO_URI = globalThis.__MONGO_URI__
-})
+
+  const uri = mongoServer.getUri()
+  process.env.MONGO_URI = uri
+  globalThis.__MONGO_URI__ = uri
+}, 150000) // 2.5 minute timeout
 
 afterAll(async () => {
-  await teardown()
-})
+  if (mongoServer) {
+    await mongoServer.stop()
+  }
+}, 30000)
