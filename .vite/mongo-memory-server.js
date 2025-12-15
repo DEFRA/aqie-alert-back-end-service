@@ -4,18 +4,24 @@ import { MongoMemoryServer } from 'mongodb-memory-server'
 let mongoServer
 
 beforeAll(async () => {
+  // Skip MongoDB Memory Server in CI environments
+  if (process.env.CI || process.env.GITHUB_ACTIONS) {
+    process.env.MONGO_URI = 'mongodb://localhost:27017/test'
+    globalThis.__MONGO_URI__ = 'mongodb://localhost:27017/test'
+    return
+  }
+
   try {
-    // Setup mongo mock with increased timeout and CI-friendly configuration
     mongoServer = await MongoMemoryServer.create({
       binary: {
-        version: '7.0.0', // Use newer version for better compatibility
+        version: '7.0.0',
         downloadDir: './mongodb-binaries',
-        skipMD5: true // Skip MD5 check for faster CI builds
+        skipMD5: true
       },
       instance: {
         port: 27017,
         dbName: 'test',
-        launchTimeout: 180000 // 3 minutes for CI environments
+        launchTimeout: 180000
       }
     })
 
@@ -24,7 +30,6 @@ beforeAll(async () => {
     globalThis.__MONGO_URI__ = uri
   } catch (error) {
     console.error('Failed to start MongoDB Memory Server:', error)
-    // Set a fallback URI for tests that don't require actual MongoDB
     process.env.MONGO_URI = 'mongodb://localhost:27017/test'
     globalThis.__MONGO_URI__ = 'mongodb://localhost:27017/test'
   }
