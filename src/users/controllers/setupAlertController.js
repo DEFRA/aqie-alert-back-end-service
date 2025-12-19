@@ -75,19 +75,34 @@ export async function setupAlertHandler(request, h) {
 
     const userIdentifier = { user_contact: userContact }
 
-    // Check for duplicate location
-    const existingUser = await db.collection('USERS').findOne({
-      ...userIdentifier,
-      'locations.location': location,
-      'locations.coordinates': [long, lat]
-    })
+    // Check for duplicate location and location limit
+    const existingUser = await db.collection('USERS').findOne(userIdentifier)
 
     if (existingUser) {
-      logger.warn(
-        { requestId, location, lat, long },
-        'Duplicate location detected'
+      // Check for duplicate location
+      const isDuplicate = existingUser.locations?.some(
+        (loc) =>
+          loc.location === location &&
+          loc.coordinates[0] === long &&
+          loc.coordinates[1] === lat
       )
-      return Boom.conflict('Alert already exists for this location')
+
+      if (isDuplicate) {
+        logger.warn(
+          { requestId, location, lat, long },
+          'Duplicate location detected'
+        )
+        return Boom.conflict('Alert already exists for this location')
+      }
+
+      // Check location limit (max 5 locations)
+      if (existingUser.locations?.length >= 5) {
+        logger.warn(
+          { requestId, locationCount: existingUser.locations.length },
+          'Location limit exceeded'
+        )
+        return Boom.badRequest('Maximum 5 locations allowed per user')
+      }
     }
 
     const result = await db.collection('USERS').findOneAndUpdate(
