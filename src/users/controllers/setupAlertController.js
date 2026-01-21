@@ -6,6 +6,7 @@ import {
   maskEmail,
   maskTemplateId
 } from '../utils/maskingUtils.js'
+import { normalizeLocation, isSameLocation } from '../utils/locationUtils.js'
 import { config } from '../../config.js'
 
 const logger = createLogger()
@@ -45,8 +46,9 @@ export async function setupAlertHandler(request, h) {
     'Database connection verified'
   )
 
+  const normalizedLocation = normalizeLocation(location)
   const locationData = {
-    location,
+    location, // Store original format as received
     coordinates: [long, lat], // GeoJSON format [longitude, latitude]
     createdAt: new Date()
   }
@@ -79,17 +81,14 @@ export async function setupAlertHandler(request, h) {
     const existingUser = await db.collection('USERS').findOne(userIdentifier)
 
     if (existingUser) {
-      // Check for duplicate location
-      const isDuplicate = existingUser.locations?.some(
-        (loc) =>
-          loc.location === location &&
-          loc.coordinates[0] === long &&
-          loc.coordinates[1] === lat
+      // Check for duplicate location using normalized comparison (location name only)
+      const isDuplicate = existingUser.locations?.some((loc) =>
+        isSameLocation(loc.location, location)
       )
 
       if (isDuplicate) {
         logger.warn(
-          { requestId, location, lat, long },
+          { requestId, location: normalizedLocation, lat, long },
           'Duplicate location detected'
         )
         return Boom.conflict('Alert already exists for this location')
@@ -151,7 +150,7 @@ export async function setupAlertHandler(request, h) {
       phoneNumber: phoneNumber || undefined,
       emailAddress: emailAddress || undefined,
       templateId,
-      personalisation: { location }
+      personalisation: { location } // Use original format
     }
 
     logger.info(
