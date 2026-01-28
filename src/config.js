@@ -136,7 +136,7 @@ const config = convict({
       emailSetUpConfirmation: {
         doc: 'Email notification template ID',
         format: String,
-        default: 'email-template-id',
+        default: '55e3e00c-0401-4f41-bf22-ecbbcf8af412',
         env: 'EMAIL_SET_UP_CONFIRMATION_TEMPLATE_ID'
       }
     }

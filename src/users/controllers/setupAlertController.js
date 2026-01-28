@@ -68,20 +68,18 @@ export async function setupAlertHandler(request, h) {
   )
 
   try {
-    // Check if user exists and update locations, or create new user
+    // STEP 1: Check for duplicate location and location limit BEFORE notification
     const dbStartTime = Date.now()
     logger.info(
       { requestId, collection: 'USERS' },
-      'Starting database operation'
+      'Checking for duplicate location and user limits'
     )
 
     const userIdentifier = { user_contact: userContact }
-
-    // Check for duplicate location and location limit
     const existingUser = await db.collection('USERS').findOne(userIdentifier)
 
     if (existingUser) {
-      // Check for duplicate location using normalized comparison (location name only)
+      // Check for duplicate location using normalized comparison
       const isDuplicate = existingUser.locations?.some((loc) =>
         isSameLocation(loc.location, location)
       )
@@ -104,44 +102,13 @@ export async function setupAlertHandler(request, h) {
       }
     }
 
-    const result = await db.collection('USERS').findOneAndUpdate(
-      userIdentifier,
-      {
-        $setOnInsert: {
-          user_contact: userContact,
-          alertType,
-          createdAt: new Date(),
-          requestId
-        },
-        $push: { locations: locationData }
-      },
-      { upsert: true, returnDocument: 'after' }
-    )
-
-    const dbDuration = Date.now() - dbStartTime
-
-    if (!result) {
-      logger.error(
-        { requestId, result },
-        'Database operation failed - no result returned'
-      )
-      return Boom.internal('Failed to process user data')
-    }
-
-    const userId = result._id
-    const isNewUser = result.locations?.length === 1
-
+    const duplicateCheckDuration = Date.now() - dbStartTime
     logger.info(
-      {
-        requestId,
-        userId,
-        dbDuration,
-        isNewUser
-      },
-      'User and location successfully processed in database'
+      { requestId, duplicateCheckDuration },
+      'Duplicate location check completed - proceeding with notification'
     )
 
-    // Prepare notification payload
+    // STEP 2: Validate with notification service after duplicate check
     const templateId =
       alertType === 'sms'
         ? config.get('notification.templates.smsSetUpConfirmation')
@@ -163,18 +130,21 @@ export async function setupAlertHandler(request, h) {
           templateId: maskTemplateId(templateId)
         }
       },
-      'Prepared notification payload'
+      'Prepared notification payload for validation'
     )
 
-    // Call to aqie-notify-service - fail if notification fails
+    // STEP 1: Validate with notification service FIRST
     const notifyStartTime = Date.now()
     try {
-      logger.info({ requestId }, 'Initiating notification service call')
+      logger.info(
+        { requestId },
+        'Validating with notification service before database operation'
+      )
       await sendNotification(notifyPayload, requestId)
       const notifyDuration = Date.now() - notifyStartTime
       logger.info(
         { requestId, notifyDuration },
-        'Notification service call completed successfully'
+        'Notification service validation successful'
       )
     } catch (err) {
       const notifyDuration = Date.now() - notifyStartTime
@@ -191,26 +161,57 @@ export async function setupAlertHandler(request, h) {
             templateId: maskTemplateId(notifyPayload.templateId)
           }
         },
-        'Notification service call failed - rolling back user creation'
+        'Notification service validation failed - stopping before database operation'
       )
-
-      // Rollback: Remove the added location
-      try {
-        await db
-          .collection('USERS')
-          .updateOne({ _id: userId }, { $pull: { locations: locationData } })
-        logger.info({ requestId, userId }, 'Location rollback completed')
-      } catch (rollbackErr) {
-        logger.error(
-          { requestId, rollbackErr: rollbackErr.message },
-          'Rollback failed'
-        )
-      }
 
       return Boom.badGateway(
-        'Alert setup failed - notification service unavailable'
+        'Alert setup failed - notification service unavailable or invalid contact details'
       )
     }
+
+    // STEP 3: Save to database after successful notification validation
+    const dbSaveStartTime = Date.now()
+    logger.info(
+      { requestId, collection: 'USERS' },
+      'Starting database save operation'
+    )
+
+    const result = await db.collection('USERS').findOneAndUpdate(
+      userIdentifier,
+      {
+        $setOnInsert: {
+          user_contact: userContact,
+          alertType,
+          createdAt: new Date(),
+          requestId
+        },
+        $push: { locations: locationData }
+      },
+      { upsert: true, returnDocument: 'after' }
+    )
+
+    const dbSaveDuration = Date.now() - dbSaveStartTime
+
+    if (!result) {
+      logger.error(
+        { requestId, result },
+        'Database operation failed - no result returned'
+      )
+      return Boom.internal('Failed to process user data')
+    }
+
+    const userId = result._id
+    const isNewUser = result.locations?.length === 1
+
+    logger.info(
+      {
+        requestId,
+        userId,
+        dbSaveDuration,
+        isNewUser
+      },
+      'User and location successfully saved to database'
+    )
 
     const totalDuration = Date.now() - startTime
     const response = { message: 'Alert setup successful', userId }
@@ -220,7 +221,8 @@ export async function setupAlertHandler(request, h) {
         requestId,
         userId,
         totalDuration,
-        dbDuration,
+        duplicateCheckDuration,
+        dbSaveDuration,
         response
       },
       'Setup alert handler completed successfully'

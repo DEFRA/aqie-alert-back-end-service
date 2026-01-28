@@ -2,6 +2,7 @@ import Boom from '@hapi/boom'
 import { setupAlertHandler } from '../controllers/setupAlertController.js'
 import { createLogger } from '../../common/helpers/logging/logger.js'
 import { maskPhoneNumber, maskEmail } from '../utils/maskingUtils.js'
+import { validateContactInfo } from '../utils/validationUtils.js'
 
 const logger = createLogger()
 
@@ -35,14 +36,18 @@ const setupAlert = {
           throw Boom.badRequest('alertType must be sms or email')
         }
 
-        if (alertType === 'sms' && !phoneNumber) {
-          logger.warn({ alertType }, 'phoneNumber missing for SMS alert')
-          throw Boom.badRequest('phoneNumber is required for sms alerts')
-        }
-
-        if (alertType === 'email' && !emailAddress) {
-          logger.warn({ alertType }, 'emailAddress missing for email alert')
-          throw Boom.badRequest('emailAddress is required for email alerts')
+        // Validate contact information based on alert type
+        const contactValidation = validateContactInfo(
+          alertType,
+          phoneNumber,
+          emailAddress
+        )
+        if (!contactValidation.isValid) {
+          logger.warn(
+            { alertType, error: contactValidation.error },
+            'Contact validation failed'
+          )
+          throw Boom.badRequest(contactValidation.error)
         }
 
         if (!location || lat == null || long == null) {
