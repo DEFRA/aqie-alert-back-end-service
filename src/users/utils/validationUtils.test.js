@@ -2,7 +2,8 @@ import { describe, it, expect } from 'vitest'
 import {
   isValidEmail,
   isValidPhoneNumber,
-  validateContactInfo
+  validateContactInfo,
+  normalizePhoneNumber
 } from './validationUtils.js'
 
 describe('validationUtils', () => {
@@ -25,16 +26,16 @@ describe('validationUtils', () => {
   })
 
   describe('isValidPhoneNumber', () => {
-    it('should validate correct UK phone number formats', () => {
-      expect(isValidPhoneNumber('07123456789')).toBe(true) // Mobile
-      expect(isValidPhoneNumber('01234567890')).toBe(true) // Landline
-      expect(isValidPhoneNumber('02012345678')).toBe(true) // London landline
-      expect(isValidPhoneNumber('+447123456789')).toBe(true) // International
+    it('should validate correct UK mobile number formats only', () => {
+      expect(isValidPhoneNumber('07896543210')).toBe(true) // Mobile
+      expect(isValidPhoneNumber('+447896543210')).toBe(true) // International mobile
       expect(isValidPhoneNumber('07123 456 789')).toBe(true) // With spaces
       expect(isValidPhoneNumber('07123-456-789')).toBe(true) // With dashes
     })
 
-    it('should reject invalid phone number formats', () => {
+    it('should reject non-mobile UK numbers and invalid formats', () => {
+      expect(isValidPhoneNumber('01234567890')).toBe(false) // Landline - not allowed
+      expect(isValidPhoneNumber('02012345678')).toBe(false) // London landline - not allowed
       expect(isValidPhoneNumber('123456789')).toBe(false) // Too short
       expect(isValidPhoneNumber('071234567890')).toBe(false) // Too long
       expect(isValidPhoneNumber('08123456789')).toBe(false) // Invalid prefix
@@ -44,15 +45,30 @@ describe('validationUtils', () => {
     })
   })
 
+  describe('normalizePhoneNumber', () => {
+    it('should normalize UK mobile numbers to +44 international format', () => {
+      expect(normalizePhoneNumber('07896543210')).toBe('+447896543210')
+      expect(normalizePhoneNumber('+447896543210')).toBe('+447896543210')
+    })
+  })
+
   describe('validateContactInfo', () => {
-    it('should validate SMS alert with valid phone number', () => {
-      const result = validateContactInfo('sms', '07123456789', null)
+    it('should validate SMS alert with valid mobile number', () => {
+      const result = validateContactInfo('sms', '07896543210', null)
       expect(result.isValid).toBe(true)
       expect(result.error).toBe(null)
     })
 
     it('should reject SMS alert with invalid phone number', () => {
       const result = validateContactInfo('sms', '123456', null)
+      expect(result.isValid).toBe(false)
+      expect(result.error).toBe(
+        'Invalid phone number format. Please provide a valid UK phone number'
+      )
+    })
+
+    it('should reject SMS alert with landline number', () => {
+      const result = validateContactInfo('sms', '01234567890', null)
       expect(result.isValid).toBe(false)
       expect(result.error).toBe(
         'Invalid phone number format. Please provide a valid UK phone number'

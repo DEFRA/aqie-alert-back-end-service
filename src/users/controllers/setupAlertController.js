@@ -7,6 +7,7 @@ import {
   maskTemplateId
 } from '../utils/maskingUtils.js'
 import { normalizeLocation, isSameLocation } from '../utils/locationUtils.js'
+import { normalizePhoneNumber } from '../utils/validationUtils.js'
 import { config } from '../../config.js'
 
 const logger = createLogger()
@@ -53,7 +54,7 @@ export async function setupAlertHandler(request, h) {
     createdAt: new Date()
   }
 
-  const userContact = phoneNumber || emailAddress
+  const userContact = normalizePhoneNumber(phoneNumber) || emailAddress
 
   logger.info(
     {

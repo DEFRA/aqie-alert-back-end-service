@@ -3,6 +3,28 @@ import { createLogger } from '../../common/helpers/logging/logger.js'
 const logger = createLogger()
 
 /**
+ * Normalizes UK mobile number to international format
+ * @param {string} phoneNumber - Phone number to normalize
+ * @returns {string} - Normalized phone number (+447xxxxxxxxx format)
+ */
+export function normalizePhoneNumber(phoneNumber) {
+  if (!phoneNumber || typeof phoneNumber !== 'string') {
+    return phoneNumber
+  }
+
+  // Remove all non-digit characters
+  const cleanNumber = phoneNumber.replace(/\D/g, '')
+
+  // Convert 07 format to +44 format (mobile only)
+  if (cleanNumber.startsWith('07') && cleanNumber.length === 11) {
+    return '+44' + cleanNumber.substring(1) // 07896543210 -> +447896543210
+  }
+
+  // Return as-is if already in +44 format
+  return phoneNumber
+}
+
+/**
  * Validates email address format
  * @param {string} email - Email address to validate
  * @returns {boolean} - True if valid email format
@@ -18,9 +40,9 @@ export function isValidEmail(email) {
 }
 
 /**
- * Validates UK phone number format
+ * Validates UK phone number format (mobile numbers only)
  * @param {string} phoneNumber - Phone number to validate
- * @returns {boolean} - True if valid phone number format
+ * @returns {boolean} - True if valid UK mobile number format
  */
 export function isValidPhoneNumber(phoneNumber) {
   if (!phoneNumber || typeof phoneNumber !== 'string') {
@@ -30,21 +52,15 @@ export function isValidPhoneNumber(phoneNumber) {
   // Remove all non-digit characters for validation
   const cleanNumber = phoneNumber.replace(/\D/g, '')
 
-  // UK phone number patterns:
-  // - Mobile: 07xxxxxxxxx (11 digits)
-  // - Landline: 01xxxxxxxxx or 02xxxxxxxxx (11 digits)
-  // - International format: +44xxxxxxxxxx (13 digits with +44)
+  // Only accept UK mobile numbers:
+  // - 07xxxxxxxxx (11 digits)
+  // - +447xxxxxxxxx (13 digits with +44)
 
   if (phoneNumber.startsWith('+44')) {
-    return cleanNumber.length === 13 && cleanNumber.startsWith('44')
+    return cleanNumber.length === 12 && cleanNumber.startsWith('447')
   }
 
-  return (
-    cleanNumber.length === 11 &&
-    (cleanNumber.startsWith('07') || // Mobile
-      cleanNumber.startsWith('01') || // Landline
-      cleanNumber.startsWith('02')) // Landline
-  )
+  return cleanNumber.length === 11 && cleanNumber.startsWith('07')
 }
 
 /**
