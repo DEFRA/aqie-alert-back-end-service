@@ -9,8 +9,9 @@ vi.mock('undici', () => ({
 vi.mock('../../config.js', () => ({
   config: {
     get: vi.fn((key) => {
-      if (key === 'notification.serviceUrl')
+      if (key === 'notification.serviceUrl') {
         return 'http://localhost:3000/send-notification'
+      }
       return null
     })
   }
