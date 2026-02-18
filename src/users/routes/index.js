@@ -1,11 +1,12 @@
 import { setupAlert } from './setup-alert.js'
+import { optOutAlert } from './opt-out-alert.js'
 import { createLogger } from '../../common/helpers/logging/logger.js'
 
 const logger = createLogger()
 
-logger.info({ routeCount: 1 }, 'Initializing user routes')
+const userRoutes = [setupAlert, optOutAlert]
 
-const userRoutes = [setupAlert]
+logger.info({ routeCount: userRoutes.length }, 'Initializing user routes')
 
 logger.info(
   {

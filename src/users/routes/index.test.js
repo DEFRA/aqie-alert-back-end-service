@@ -10,6 +10,14 @@ vi.mock('./setup-alert.js', () => ({
   }
 }))
 
+vi.mock('./opt-out-alert.js', () => ({
+  optOutAlert: {
+    method: 'POST',
+    path: '/opt-out-alert',
+    handler: vi.fn()
+  }
+}))
+
 vi.mock('../../common/helpers/logging/logger.js', () => ({
   createLogger: () => ({
     info: vi.fn(),
@@ -25,11 +33,16 @@ describe('user routes index', () => {
       expect(Array.isArray(userRoutes)).toBe(true)
     })
 
-    it('should contain setup-alert route', () => {
-      expect(userRoutes).toHaveLength(1)
+    it('should contain setup-alert and opt-out-alert routes', () => {
+      expect(userRoutes).toHaveLength(2)
       expect(userRoutes[0]).toEqual({
         method: 'POST',
         path: '/setup-alert',
+        handler: expect.any(Function)
+      })
+      expect(userRoutes[1]).toEqual({
+        method: 'POST',
+        path: '/opt-out-alert',
         handler: expect.any(Function)
       })
     })
@@ -43,8 +56,8 @@ describe('user routes index', () => {
   })
 
   describe('Route count validation', () => {
-    it('should have exactly 1 route', () => {
-      expect(userRoutes).toHaveLength(1)
+    it('should have exactly 2 routes', () => {
+      expect(userRoutes).toHaveLength(2)
     })
   })
 })
