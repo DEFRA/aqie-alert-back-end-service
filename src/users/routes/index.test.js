@@ -12,8 +12,8 @@ vi.mock('./setup-alert.js', () => ({
 
 vi.mock('./opt-out-alert.js', () => ({
   optOutAlert: {
-    method: 'POST',
-    path: '/opt-out-alert',
+    method: 'DELETE',
+    path: '/opt-out-sms-alert',
     handler: vi.fn()
   }
 }))
@@ -34,16 +34,31 @@ describe('user routes index', () => {
     })
 
     it('should contain setup-alert and opt-out-alert routes', () => {
-      expect(userRoutes).toHaveLength(2)
+      expect(userRoutes).toHaveLength(3)
       expect(userRoutes[0]).toEqual({
         method: 'POST',
         path: '/setup-alert',
         handler: expect.any(Function)
       })
       expect(userRoutes[1]).toEqual({
-        method: 'POST',
-        path: '/opt-out-alert',
-        handler: expect.any(Function)
+        method: 'DELETE',
+        path: '/opt-out-sms-alert',
+        handler: expect.any(Function),
+        options: {
+          validate: {
+            payload: expect.any(Function)
+          }
+        }
+      })
+      expect(userRoutes[2]).toEqual({
+        method: 'DELETE',
+        path: '/opt-out-email-alert',
+        handler: expect.any(Function),
+        options: {
+          validate: {
+            payload: expect.any(Function)
+          }
+        }
       })
     })
 
@@ -56,8 +71,8 @@ describe('user routes index', () => {
   })
 
   describe('Route count validation', () => {
-    it('should have exactly 2 routes', () => {
-      expect(userRoutes).toHaveLength(2)
+    it('should have exactly 3 routes', () => {
+      expect(userRoutes).toHaveLength(3)
     })
   })
 })

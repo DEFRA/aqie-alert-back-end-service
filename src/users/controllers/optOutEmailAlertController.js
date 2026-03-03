@@ -1,25 +1,25 @@
 import { createLogger } from '../../common/helpers/logging/logger.js'
-import { maskPhoneNumber } from '../utils/maskingUtils.js'
+import { maskEmail } from '../utils/maskingUtils.js'
 
 const logger = createLogger()
 
-export async function optOutAlertHandler(request, h) {
-  const { phoneNumber } = request.payload
+export async function optOutEmailAlertHandler(request, h) {
+  const { emailAddress } = request.payload
   const db = request.db
 
   logger.info(
-    { phoneNumber: maskPhoneNumber(phoneNumber) },
-    'Opt-out sms alert request received'
+    { emailAddress: maskEmail(emailAddress) },
+    'Opt-out email alert request received'
   )
 
   try {
     const result = await db
       .collection('USERS')
-      .deleteOne({ user_contact: phoneNumber })
+      .deleteOne({ user_contact: emailAddress })
 
     if (result.deletedCount === 0) {
       logger.info(
-        { phoneNumber: maskPhoneNumber(phoneNumber) },
+        { emailAddress: maskEmail(emailAddress) },
         'User not found for opt-out'
       )
       return h
@@ -31,26 +31,26 @@ export async function optOutAlertHandler(request, h) {
     }
 
     logger.info(
-      { phoneNumber: maskPhoneNumber(phoneNumber) },
-      'Users sms alert successfully opted out'
+      { emailAddress: maskEmail(emailAddress) },
+      'Users email alert successfully opted out'
     )
 
     return h
       .response({
         success: true,
-        phoneNumber
+        emailAddress
       })
       .code(200)
   } catch (err) {
     logger.error(
-      { err, phoneNumber: maskPhoneNumber(phoneNumber) },
-      'Opt-out-sms alert failed'
+      { err, emailAddress: maskEmail(emailAddress) },
+      'Opt-out email alert failed'
     )
 
     return h
       .response({
         success: false,
-        error: 'Failed to opt-out-sms'
+        error: 'Failed to opt-out-email'
       })
       .code(500)
   }

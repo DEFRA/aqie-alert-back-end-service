@@ -6,8 +6,8 @@ import { maskPhoneNumber } from '../utils/maskingUtils.js'
 const logger = createLogger()
 
 const optOutAlert = {
-  method: 'POST',
-  path: '/opt-out-alert',
+  method: 'DELETE',
+  path: '/opt-out-sms-alert',
   options: {
     validate: {
       payload: (value) => {

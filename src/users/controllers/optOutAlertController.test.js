@@ -65,7 +65,7 @@ describe('optOutAlertHandler', () => {
 
     expect(mockH.response).toHaveBeenCalledWith({
       success: false,
-      error: 'Failed to opt-out'
+      error: 'Failed to opt-out-sms'
     })
   })
 })
