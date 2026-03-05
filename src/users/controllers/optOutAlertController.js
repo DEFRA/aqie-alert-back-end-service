@@ -8,8 +8,8 @@ export async function optOutAlertHandler(request, h) {
   const db = request.db
 
   logger.info(
-    { phoneNumber: maskPhoneNumber(phoneNumber) },
-    'Opt-out alert request received'
+    `{ phoneNumber: ${maskPhoneNumber(phoneNumber)} }`,
+    'Opt-out sms alert request received'
   )
 
   try {
@@ -19,8 +19,7 @@ export async function optOutAlertHandler(request, h) {
 
     if (result.deletedCount === 0) {
       logger.info(
-        { phoneNumber: maskPhoneNumber(phoneNumber) },
-        'User not found for opt-out'
+        `{ phoneNumber: ${maskPhoneNumber(phoneNumber)} } User not found for opt-out`
       )
       return h
         .response({
@@ -31,8 +30,8 @@ export async function optOutAlertHandler(request, h) {
     }
 
     logger.info(
-      { phoneNumber: maskPhoneNumber(phoneNumber) },
-      'User successfully opted out'
+      `{ phoneNumber: ${maskPhoneNumber(phoneNumber)} }`,
+      'Users sms alert successfully opted out'
     )
 
     return h
@@ -43,14 +42,14 @@ export async function optOutAlertHandler(request, h) {
       .code(200)
   } catch (err) {
     logger.error(
-      { err: err.message, phoneNumber: maskPhoneNumber(phoneNumber) },
-      'Opt-out alert failed'
+      `{ err: ${JSON.stringify(err)}, phoneNumber: ${maskPhoneNumber(phoneNumber)} }`,
+      'Opt-out-sms alert failed'
     )
 
     return h
       .response({
         success: false,
-        error: 'Failed to opt-out'
+        error: 'Failed to opt-out-sms'
       })
       .code(500)
   }

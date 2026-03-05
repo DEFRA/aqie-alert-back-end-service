@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { optOutAlert } from './opt-out-alert.js'
+import { optOutAlert } from './opt-out-sms-alert.js'
 
 vi.mock('../../common/helpers/logging/logger.js', () => ({
   createLogger: () => ({
@@ -10,8 +10,8 @@ vi.mock('../../common/helpers/logging/logger.js', () => ({
 
 describe('optOutAlert route', () => {
   it('should have correct method and path', () => {
-    expect(optOutAlert.method).toBe('POST')
-    expect(optOutAlert.path).toBe('/opt-out-alert')
+    expect(optOutAlert.method).toBe('DELETE')
+    expect(optOutAlert.path).toBe('/opt-out-sms-alert')
   })
 
   it('should validate phoneNumber is required', () => {
