@@ -20,7 +20,9 @@ vi.mock('../../config.js', () => ({
     get: vi.fn((key) => {
       const config = {
         'notification.templates.smsSetUpConfirmation': 'sms-template-id',
-        'notification.templates.emailSetUpConfirmation': 'email-template-id'
+        'notification.templates.emailSetUpConfirmation': 'email-template-id',
+        'notification.templates.unsubscribeEmailLink':
+          'https://aqie-front-end.test.cdp-int.defra.cloud/notify/unsubscribe-email-link'
       }
       return config[key]
     })
@@ -134,7 +136,11 @@ describe('setupAlertController', () => {
           phoneNumber: undefined,
           emailAddress: 'test@example.com',
           templateId: 'email-template-id',
-          personalisation: { location: 'Manchester, Greater Manchester' }
+          personalisation: {
+            location: 'Manchester, Greater Manchester',
+            unsubscribeLink:
+              'https://aqie-front-end.test.cdp-int.defra.cloud/notify/unsubscribe-email-link?email=test%40example.com'
+          }
         },
         'test-request-id'
       )

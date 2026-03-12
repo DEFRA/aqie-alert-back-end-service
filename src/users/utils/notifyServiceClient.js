@@ -13,7 +13,7 @@ export async function sendNotification(payload, requestId) {
   const serviceUrl = config.get('notification.serviceUrl')
 
   logger.info(
-    {
+    `Starting notification service call ${JSON.stringify({
       requestId: finalRequestId,
       payload: {
         ...payload,
@@ -22,8 +22,7 @@ export async function sendNotification(payload, requestId) {
         templateId: maskTemplateId(payload.templateId)
       },
       serviceUrl
-    },
-    'Starting notification service call'
+    })}`
   )
 
   const fetchOptions = {
@@ -36,44 +35,40 @@ export async function sendNotification(payload, requestId) {
   }
 
   logger.info(
-    {
+    `Prepared fetch options for notification service ${JSON.stringify({
       requestId: finalRequestId,
       headers: fetchOptions.headers,
       bodySize: fetchOptions.body.length
-    },
-    'Prepared fetch options for notification service'
+    })}`
   )
 
   try {
     logger.info(
-      { requestId: finalRequestId, serviceUrl },
-      'Initiating HTTP request to notification service'
+      `Initiating HTTP request to notification service ${JSON.stringify({ requestId: finalRequestId, serviceUrl })}`
     )
     const response = await fetch(serviceUrl, fetchOptions)
     const duration = Date.now() - startTime
 
     logger.info(
-      {
+      `Received response from notification service ${JSON.stringify({
         requestId: finalRequestId,
         status: response.status,
         statusText: response.statusText,
         duration,
         headers: Object.fromEntries(response.headers.entries())
-      },
-      'Received response from notification service'
+      })}`
     )
 
     if (!response.ok) {
       const errorText = await response.text()
       logger.error(
-        {
+        `Notification service returned error response ${JSON.stringify({
           requestId: finalRequestId,
           status: response.status,
           statusText: response.statusText,
           errorText,
           duration
-        },
-        'Notification service returned error response'
+        })}`
       )
 
       throw new Error(
@@ -88,19 +83,17 @@ export async function sendNotification(payload, requestId) {
       responseBody = responseText ? JSON.parse(responseText) : null
     } catch (parseErr) {
       logger.warn(
-        { requestId: finalRequestId, parseErr: parseErr.message },
-        'Could not parse response body'
+        `Could not parse response body ${JSON.stringify({ requestId: finalRequestId, parseErr: parseErr.message })}`
       )
       responseBody = 'Unable to parse response'
     }
 
     logger.info(
-      {
+      `Notification service call completed successfully ${JSON.stringify({
         requestId: finalRequestId,
         duration,
         responseBody
-      },
-      'Notification service call completed successfully'
+      })}`
     )
 
     return response
@@ -109,35 +102,38 @@ export async function sendNotification(payload, requestId) {
 
     if (err.code === 'ECONNREFUSED') {
       logger.error(
-        {
-          requestId: finalRequestId,
-          serviceUrl,
-          duration,
-          errorCode: err.code
-        },
-        'Connection refused - notification service may be down'
+        `Connection refused - notification service may be down ${JSON.stringify(
+          {
+            requestId: finalRequestId,
+            serviceUrl,
+            duration,
+            errorCode: err.code
+          }
+        )}`
       )
     } else if (err.code === 'ETIMEDOUT') {
       logger.error(
-        {
-          requestId: finalRequestId,
-          serviceUrl,
-          duration,
-          errorCode: err.code
-        },
-        'Request timeout - notification service not responding'
+        `Request timeout - notification service not responding ${JSON.stringify(
+          {
+            requestId: finalRequestId,
+            serviceUrl,
+            duration,
+            errorCode: err.code
+          }
+        )}`
       )
     } else {
       logger.error(
-        {
-          requestId: finalRequestId,
-          serviceUrl,
-          duration,
-          err: err.message,
-          stack: err.stack,
-          errorCode: err.code
-        },
-        'Notification service call failed with unexpected error'
+        `Notification service call failed with unexpected error ${JSON.stringify(
+          {
+            requestId: finalRequestId,
+            serviceUrl,
+            duration,
+            err: err.message,
+            stack: err.stack,
+            errorCode: err.code
+          }
+        )}`
       )
     }
 

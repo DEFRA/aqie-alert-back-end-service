@@ -8,8 +8,7 @@ export async function optOutEmailAlertHandler(request, h) {
   const db = request.db
 
   logger.info(
-    `{ emailAddress: ${maskEmail(emailAddress)} }`,
-    'Opt-out email alert request received'
+    `Opt-out email alert request received ${JSON.stringify({ emailAddress: maskEmail(emailAddress) })}`
   )
 
   try {
@@ -19,8 +18,7 @@ export async function optOutEmailAlertHandler(request, h) {
 
     if (result.deletedCount === 0) {
       logger.info(
-        { emailAddress: maskEmail(emailAddress) },
-        'User not found for opt-out'
+        `User not found for opt-out ${JSON.stringify({ emailAddress: maskEmail(emailAddress) })}`
       )
       return h
         .response({
@@ -31,8 +29,7 @@ export async function optOutEmailAlertHandler(request, h) {
     }
 
     logger.info(
-      { emailAddress: maskEmail(emailAddress) },
-      'Users email alert successfully opted out'
+      `Users email alert successfully opted out ${JSON.stringify({ emailAddress: maskEmail(emailAddress) })}`
     )
 
     return h
@@ -43,8 +40,7 @@ export async function optOutEmailAlertHandler(request, h) {
       .code(200)
   } catch (err) {
     logger.error(
-      { err, emailAddress: maskEmail(emailAddress) },
-      'Opt-out email alert failed'
+      `Opt-out email alert failed ${JSON.stringify({ err: err.message, emailAddress: maskEmail(emailAddress) })}`
     )
 
     return h

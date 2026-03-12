@@ -138,6 +138,13 @@ const config = convict({
         format: String,
         default: '55e3e00c-0401-4f41-bf22-ecbbcf8af412',
         env: 'EMAIL_SET_UP_CONFIRMATION_TEMPLATE_ID'
+      },
+      unsubscribeEmailLink: {
+        doc: 'Unsubscribe email link (frontend URL)',
+        format: String,
+        default:
+          'https://aqie-front-end.test.cdp-int.defra.cloud/notify/unsubscribe-email-link',
+        env: 'UNSUBSCRIBE_EMAIL_LINK'
       }
     }
   },

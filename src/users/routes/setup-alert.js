@@ -19,20 +19,21 @@ const setupAlert = {
     validate: {
       payload: (value, options) => {
         logger.info(
-          {
+          `Validating setup-alert payload ${JSON.stringify({
             payload: {
               ...value,
               phoneNumber: maskPhoneNumber(value.phoneNumber),
               emailAddress: maskEmail(value.emailAddress)
             }
-          },
-          'Validating setup-alert payload'
+          })}`
         )
         const { phoneNumber, emailAddress, alertType, location, lat, long } =
           value
 
         if (!alertType || !['sms', 'email'].includes(alertType)) {
-          logger.warn({ alertType }, 'Invalid alertType provided')
+          logger.warn(
+            `Invalid alertType provided ${JSON.stringify({ alertType })}`
+          )
           throw Boom.badRequest('alertType must be sms or email')
         }
 
@@ -44,14 +45,15 @@ const setupAlert = {
         )
         if (!contactValidation.isValid) {
           logger.warn(
-            { alertType, error: contactValidation.error },
-            'Contact validation failed'
+            `Contact validation failed ${JSON.stringify({ alertType, error: contactValidation.error })}`
           )
           throw Boom.badRequest(contactValidation.error)
         }
 
         if (!location || lat == null || long == null) {
-          logger.warn({ location, lat, long }, 'Missing required location data')
+          logger.warn(
+            `Missing required location data ${JSON.stringify({ location, lat, long })}`
+          )
           throw Boom.badRequest('location, lat, and long are required')
         }
 

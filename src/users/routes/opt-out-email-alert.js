@@ -12,22 +12,22 @@ const optOutEmailAlert = {
     validate: {
       payload: (value) => {
         logger.info(
-          { payload: { emailAddress: maskEmail(value.emailAddress) } },
-          'Validating opt-out email alert payload'
+          `Validating opt-out email alert payload ${JSON.stringify({ payload: { emailAddress: maskEmail(value.emailAddress) } })}`
         )
 
         const { emailAddress } = value
 
         if (!emailAddress || typeof emailAddress !== 'string') {
-          logger.warn({ emailAddress }, 'Invalid emailAddress provided')
+          logger.warn(
+            `Invalid emailAddress provided ${JSON.stringify({ emailAddress })}`
+          )
           throw Boom.badRequest('emailAddress is required')
         }
 
         const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
         if (!emailRegex.test(emailAddress)) {
           logger.warn(
-            { emailAddress: maskEmail(emailAddress) },
-            'Invalid email format'
+            `Invalid email format ${JSON.stringify({ emailAddress: maskEmail(emailAddress) })}`
           )
           throw Boom.forbidden('Invalid email format')
         }

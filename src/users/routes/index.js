@@ -7,16 +7,17 @@ const logger = createLogger()
 
 const userRoutes = [setupAlert, optOutAlert, optOutEmailAlert]
 
-logger.info({ routeCount: userRoutes.length }, 'Initializing user routes')
+logger.info(
+  `Initializing user routes ${JSON.stringify({ routeCount: userRoutes.length })}`
+)
 
 logger.info(
-  {
+  `User routes configured successfully ${JSON.stringify({
     routes: userRoutes.map((route) => ({
       method: route.method,
       path: route.path
     }))
-  },
-  'User routes configured successfully'
+  })}`
 )
 
 export { userRoutes }

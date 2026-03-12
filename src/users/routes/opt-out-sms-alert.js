@@ -12,22 +12,22 @@ const optOutAlert = {
     validate: {
       payload: (value) => {
         logger.info(
-          { payload: { phoneNumber: value.phoneNumber } },
-          'Validating opt-out alert payload'
+          `Validating opt-out alert payload ${JSON.stringify({ payload: { phoneNumber: value.phoneNumber } })}`
         )
 
         const { phoneNumber } = value
 
         if (!phoneNumber || typeof phoneNumber !== 'string') {
-          logger.warn({ phoneNumber }, 'Invalid phoneNumber provided')
+          logger.warn(
+            `Invalid phoneNumber provided ${JSON.stringify({ phoneNumber })}`
+          )
           throw Boom.badRequest('phoneNumber is required')
         }
 
         const ukPhoneRegex = /^(\+?44|07)\d{9,10}$/
         if (!ukPhoneRegex.test(phoneNumber.replace(/\s/g, ''))) {
           logger.warn(
-            { phoneNumber: maskPhoneNumber(phoneNumber) },
-            'Invalid UK phone number format'
+            `Invalid UK phone number format ${JSON.stringify({ phoneNumber: maskPhoneNumber(phoneNumber) })}`
           )
           throw Boom.badRequest(
             'phoneNumber must be a valid UK number starting with 07 or +44'
