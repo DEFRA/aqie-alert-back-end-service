@@ -119,6 +119,13 @@ const config = convict({
     default: null,
     env: 'HTTP_PROXY'
   },
+  httpsProxy: {
+    doc: 'HTTPS Proxy',
+    format: String,
+    nullable: true,
+    default: null,
+    env: 'HTTPS_PROXY'
+  },
   notification: {
     serviceUrl: {
       doc: 'Notification service URL',
@@ -146,6 +153,77 @@ const config = convict({
           'https://aqie-front-end.test.cdp-int.defra.cloud/notify/unsubscribe-email-link',
         env: 'UNSUBSCRIBE_EMAIL_LINK'
       }
+    }
+  },
+  ricardoApi: {
+    loginUrl: {
+      doc: 'Ricardo API login URL for token generation',
+      format: String,
+      default: 'https://uk-air-api.staging.rcdo.co.uk/api/login_check',
+      env: 'RICARDO_API_LOGIN_URL'
+    },
+    alertsUrl: {
+      doc: 'Ricardo API AQSR alerts endpoint',
+      format: String,
+      default: 'https://uk-air-api.staging.rcdo.co.uk/api/aqsr_alerts',
+      env: 'RICARDO_API_ALERTS_URL'
+    },
+    email: {
+      doc: 'Ricardo API login email',
+      format: String,
+      default: 'maruthi.chokkanathan@cognizant.com',
+      env: 'RICARDO_API_EMAIL'
+    },
+    password: {
+      doc: 'Ricardo API login password',
+      format: String,
+      default: 'Mr5e7TFseqzD8Mt#',
+      env: 'RICARDO_API_PASSWORD',
+      sensitive: true
+    },
+    pollingIntervalMs: {
+      doc: 'Polling interval in milliseconds for fetching alerts',
+      format: Number,
+      default: 1800000,
+      env: 'RICARDO_POLLING_INTERVAL_MS'
+    },
+    useMock: {
+      doc: 'Use mock Ricardo API response instead of making real HTTP calls (for local testing)',
+      format: Boolean,
+      default: true,
+      env: 'RICARDO_API_USE_MOCK'
+    }
+  },
+  alertTemplates: {
+    smsAlert: {
+      doc: 'SMS alert template ID for pollutant alerts (English)',
+      format: String,
+      default: '72e998e5-76ce-446f-9b40-a2fef9674530',
+      env: 'SMS_ALERT_TEMPLATE_ID'
+    },
+    smsAlertCy: {
+      doc: 'SMS alert template ID for pollutant alerts (Welsh)',
+      format: String,
+      default: '72e998e5-76ce-446f-9b40-a2fef9674530',
+      env: 'SMS_ALERT_CY_TEMPLATE_ID'
+    },
+    emailAlert: {
+      doc: 'Email alert template ID for pollutant alerts (English)',
+      format: String,
+      default: '725036d7-48a4-4134-a97e-cc423ffa0de0',
+      env: 'EMAIL_ALERT_TEMPLATE_ID'
+    },
+    emailAlertCy: {
+      doc: 'Email alert template ID for pollutant alerts (Welsh)',
+      format: String,
+      default: '725036d7-48a4-4134-a97e-cc423ffa0de0',
+      env: 'EMAIL_ALERT_CY_TEMPLATE_ID'
+    },
+    checkAirQualityLink: {
+      doc: 'Base URL for check air quality link in pollutant alerts',
+      format: String,
+      default: 'https://check-air-quality.service.gov.uk/location/',
+      env: 'CHECK_AIR_QUALITY_LINK'
     }
   },
   isMetricsEnabled: {

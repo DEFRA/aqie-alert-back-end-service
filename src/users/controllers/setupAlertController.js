@@ -9,6 +9,7 @@ import {
 import { normalizeLocation, isSameLocation } from '../utils/locationUtils.js'
 import { normalizePhoneNumber } from '../utils/validationUtils.js'
 import { config } from '../../config.js'
+import { findRegion } from '../utils/regionFinder.js'
 
 const logger = createLogger()
 
@@ -31,7 +32,7 @@ export async function setupAlertHandler(request, h) {
     })}`
   )
 
-  const { phoneNumber, emailAddress, alertType, location, lat, long } =
+  const { phoneNumber, emailAddress, alertType, location, lat, long, lang } =
     request.payload
   const db = request.db
 
@@ -48,12 +49,22 @@ export async function setupAlertHandler(request, h) {
   )
 
   const normalizedLocation = normalizeLocation(location)
+
+  // Determine region from lat/long using GeoBoundaries
+  const region = findRegion(lat, long)
+
+  logger.info(
+    `Region determination completed ${JSON.stringify({ requestId, lat, long, region })}`
+  )
+
   const locationData = {
     location, // Store original format as received
     coordinates: [long, lat], // GeoJSON format [longitude, latitude]
-    createdAt: new Date()
+    createdAt: new Date(),
+    region // Include region information
   }
 
+  const preferredLang = lang || 'en'
   const userContact = normalizePhoneNumber(phoneNumber) || emailAddress
 
   logger.info(
@@ -187,6 +198,7 @@ export async function setupAlertHandler(request, h) {
           createdAt: new Date(),
           requestId
         },
+        $set: { lang: preferredLang },
         $push: { locations: locationData }
       },
       { upsert: true, returnDocument: 'after' }

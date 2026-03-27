@@ -33,6 +33,10 @@ vi.mock('../utils/validationUtils.js', () => ({
   normalizePhoneNumber: vi.fn((phone) => phone)
 }))
 
+vi.mock('../utils/regionFinder.js', () => ({
+  findRegion: vi.fn(() => 'England')
+}))
+
 describe('setupAlertController', () => {
   let mockDb
   let mockCollection
@@ -64,7 +68,8 @@ describe('setupAlertController', () => {
         alertType: 'sms',
         location: 'London, City of Westminster',
         lat: 51.5074,
-        long: -0.1278
+        long: -0.1278,
+        lang: 'en'
       },
       db: mockDb
     }
@@ -109,6 +114,74 @@ describe('setupAlertController', () => {
       })
     })
 
+    it('should include region in locationData stored to database', async () => {
+      const { sendNotification } = await import(
+        '../utils/notifyServiceClient.js'
+      )
+      const { findRegion } = await import('../utils/regionFinder.js')
+
+      findRegion.mockReturnValue('England')
+      mockCollection.findOne.mockResolvedValue(null)
+      mockCollection.findOneAndUpdate.mockResolvedValue({
+        _id: 'user-id-123',
+        locations: [
+          { location: 'London, City of Westminster', region: 'England' }
+        ]
+      })
+      sendNotification.mockResolvedValue({ status: 'success' })
+
+      await setupAlertHandler(mockRequest, mockH)
+
+      expect(findRegion).toHaveBeenCalledWith(51.5074, -0.1278)
+      const updateCall = mockCollection.findOneAndUpdate.mock.calls[0][1]
+      expect(updateCall.$push.locations).toMatchObject({
+        location: 'London, City of Westminster',
+        region: 'England',
+        coordinates: [-0.1278, 51.5074]
+      })
+      expect(updateCall.$set).toEqual({ lang: 'en' })
+    })
+
+    it('should default lang to en when not provided', async () => {
+      const { sendNotification } = await import(
+        '../utils/notifyServiceClient.js'
+      )
+
+      delete mockRequest.payload.lang
+
+      mockCollection.findOne.mockResolvedValue(null)
+      mockCollection.findOneAndUpdate.mockResolvedValue({
+        _id: 'user-id-789',
+        locations: [{ location: 'London, City of Westminster' }]
+      })
+      sendNotification.mockResolvedValue({ status: 'success' })
+
+      await setupAlertHandler(mockRequest, mockH)
+
+      const updateCall = mockCollection.findOneAndUpdate.mock.calls[0][1]
+      expect(updateCall.$set).toEqual({ lang: 'en' })
+    })
+
+    it('should store lang cy when provided', async () => {
+      const { sendNotification } = await import(
+        '../utils/notifyServiceClient.js'
+      )
+
+      mockRequest.payload.lang = 'cy'
+
+      mockCollection.findOne.mockResolvedValue(null)
+      mockCollection.findOneAndUpdate.mockResolvedValue({
+        _id: 'user-id-101',
+        locations: [{ location: 'London, City of Westminster' }]
+      })
+      sendNotification.mockResolvedValue({ status: 'success' })
+
+      await setupAlertHandler(mockRequest, mockH)
+
+      const updateCall = mockCollection.findOneAndUpdate.mock.calls[0][1]
+      expect(updateCall.$set).toEqual({ lang: 'cy' })
+    })
+
     it('should create new email alert successfully', async () => {
       const { sendNotification } = await import(
         '../utils/notifyServiceClient.js'
@@ -119,7 +192,8 @@ describe('setupAlertController', () => {
         alertType: 'email',
         location: 'Manchester, Greater Manchester',
         lat: 53.4808,
-        long: -2.2426
+        long: -2.2426,
+        lang: 'cy'
       }
 
       mockCollection.findOne.mockResolvedValue(null)

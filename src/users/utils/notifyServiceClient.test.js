@@ -71,7 +71,7 @@ describe('notifyServiceClient', () => {
           body: JSON.stringify(payload)
         }
       )
-      expect(result).toBe(mockResponse)
+      expect(result).toEqual({ success: true })
     })
 
     it('should send email notification successfully', async () => {
@@ -89,7 +89,7 @@ describe('notifyServiceClient', () => {
           body: JSON.stringify(payload)
         })
       )
-      expect(result).toBe(mockResponse)
+      expect(result).toEqual({ success: true })
     })
 
     it('should generate request ID when not provided', async () => {
@@ -194,7 +194,7 @@ describe('notifyServiceClient', () => {
   })
 
   describe('Response parsing', () => {
-    it('should handle valid JSON response', async () => {
+    it('should return parsed JSON body on valid JSON response', async () => {
       mockResponse.text.mockResolvedValue(
         '{"messageId": "msg-123", "status": "sent"}'
       )
@@ -202,34 +202,34 @@ describe('notifyServiceClient', () => {
       const payload = { phoneNumber: '07123456789', templateId: 'template-id' }
       const result = await sendNotification(payload, 'test-request-id')
 
-      expect(result).toBe(mockResponse)
+      expect(result).toEqual({ messageId: 'msg-123', status: 'sent' })
     })
 
-    it('should handle empty response body', async () => {
+    it('should return null on empty response body', async () => {
       mockResponse.text.mockResolvedValue('')
 
       const payload = { phoneNumber: '07123456789', templateId: 'template-id' }
       const result = await sendNotification(payload, 'test-request-id')
 
-      expect(result).toBe(mockResponse)
+      expect(result).toBeNull()
     })
 
-    it('should handle invalid JSON response', async () => {
+    it('should return fallback string on invalid JSON response', async () => {
       mockResponse.text.mockResolvedValue('invalid json response')
 
       const payload = { phoneNumber: '07123456789', templateId: 'template-id' }
       const result = await sendNotification(payload, 'test-request-id')
 
-      expect(result).toBe(mockResponse)
+      expect(result).toBe('Unable to parse response')
     })
 
-    it('should handle response text parsing error', async () => {
+    it('should return fallback string when response text read fails', async () => {
       mockResponse.text.mockRejectedValue(new Error('Failed to read response'))
 
       const payload = { phoneNumber: '07123456789', templateId: 'template-id' }
       const result = await sendNotification(payload, 'test-request-id')
 
-      expect(result).toBe(mockResponse)
+      expect(result).toBe('Unable to parse response')
     })
   })
 
