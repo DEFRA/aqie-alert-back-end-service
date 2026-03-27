@@ -64,7 +64,6 @@ describe('regionFinder', () => {
   it('should return England for London coordinates', () => {
     // England is first in the regions array - return true for it
     mockBooleanPointInPolygon.mockReturnValueOnce(true)
-
     const result = findRegion(51.5074, -0.1278)
 
     expect(result).toBe('England')
