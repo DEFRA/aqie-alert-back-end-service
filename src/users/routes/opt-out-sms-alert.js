@@ -25,7 +25,7 @@ const optOutAlert = {
         }
 
         const ukPhoneRegex = /^(\+?44|07)\d{9,10}$/
-        if (!ukPhoneRegex.test(phoneNumber.replace(/\s/g, ''))) {
+        if (!ukPhoneRegex.test(phoneNumber.replaceAll(/\s/g, ''))) {
           logger.warn(
             `Invalid UK phone number format ${JSON.stringify({ phoneNumber: maskPhoneNumber(phoneNumber) })}`
           )

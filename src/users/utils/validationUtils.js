@@ -13,7 +13,7 @@ export function normalizePhoneNumber(phoneNumber) {
   }
 
   // Remove all non-digit characters
-  const cleanNumber = phoneNumber.replace(/\D/g, '')
+  const cleanNumber = phoneNumber.replaceAll(/\D/g, '')
 
   // Convert 07 format to +44 format (mobile only)
   if (cleanNumber.startsWith('07') && cleanNumber.length === 11) {
@@ -50,7 +50,7 @@ export function isValidPhoneNumber(phoneNumber) {
   }
 
   // Remove all non-digit characters for validation
-  const cleanNumber = phoneNumber.replace(/\D/g, '')
+  const cleanNumber = phoneNumber.replaceAll(/\D/g, '')
 
   // Only accept UK mobile numbers:
   // - 07xxxxxxxxx (11 digits)

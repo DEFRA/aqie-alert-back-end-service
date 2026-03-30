@@ -1,3 +1,5 @@
+import { describe, test, expect, beforeEach, vi } from 'vitest'
+
 import { StorageResolution, Unit } from 'aws-embedded-metrics'
 
 import { config } from '../../config.js'
@@ -86,7 +88,10 @@ describe('#metrics', () => {
     })
 
     test('Should log expected error', () => {
-      expect(mockLoggerError).toHaveBeenCalledWith(Error(mockError), mockError)
+      expect(mockLoggerError).toHaveBeenCalledWith(
+        new Error(mockError),
+        mockError
+      )
     })
   })
 })

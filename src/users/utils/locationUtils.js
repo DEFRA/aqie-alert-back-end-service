@@ -9,7 +9,7 @@ export function normalizeLocation(location) {
     return location
   }
 
-  return location.trim().toLowerCase().replace(/\s+/g, ' ') // Replace multiple spaces with single space
+  return location.trim().toLowerCase().replaceAll(/\s+/g, ' ') // Replace multiple spaces with single space
 }
 
 /**
