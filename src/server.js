@@ -11,6 +11,7 @@ import { pulse } from './common/helpers/pulse.js'
 import { requestTracing } from './common/helpers/request-tracing.js'
 import { setupProxy } from './common/helpers/proxy/setup-proxy.js'
 import { pollutantAlertScheduler } from './plugins/pollutant-alert-scheduler.js'
+import { forecastAlertScheduler } from './plugins/forecast-alert-scheduler.js'
 
 async function createServer() {
   setupProxy()
@@ -57,7 +58,8 @@ async function createServer() {
       options: config.get('mongo')
     },
     router,
-    pollutantAlertScheduler
+    pollutantAlertScheduler,
+    forecastAlertScheduler
   ])
 
   return server

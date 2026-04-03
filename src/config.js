@@ -181,11 +181,11 @@ const config = convict({
       env: 'RICARDO_API_PASSWORD',
       sensitive: true
     },
-    pollingIntervalMs: {
-      doc: 'Polling interval in milliseconds for fetching alerts',
-      format: Number,
-      default: 1800000,
-      env: 'RICARDO_POLLING_INTERVAL_MS'
+    cronSchedule: {
+      doc: 'Cron expression for the pollutant alert job (default: every 30 minutes)',
+      format: String,
+      default: '*/30 * * * *',
+      env: 'POLLUTANT_CRON_SCHEDULE'
     },
     useMock: {
       doc: 'Use mock Ricardo API response instead of making real HTTP calls (for local testing)',
@@ -224,6 +224,52 @@ const config = convict({
       format: String,
       default: 'https://check-air-quality.service.gov.uk/location/',
       env: 'CHECK_AIR_QUALITY_LINK'
+    }
+  },
+  forecastAlertTemplates: {
+    smsAlert: {
+      doc: 'SMS forecast alert template ID (English)',
+      format: String,
+      default: '3961db6b-a22f-4c9f-a270-0510cb3fd7f0',
+      env: 'SMS_FORECAST_ALERT_TEMPLATE_ID'
+    },
+    smsAlertCy: {
+      doc: 'SMS forecast alert template ID (Welsh)',
+      format: String,
+      default: '',
+      env: 'SMS_FORECAST_ALERT_CY_TEMPLATE_ID'
+    },
+    emailAlert: {
+      doc: 'Email forecast alert template ID (English)',
+      format: String,
+      default: 'af1ca93d-6b57-4fda-ad5e-a227fafa7770',
+      env: 'EMAIL_FORECAST_ALERT_TEMPLATE_ID'
+    },
+    emailAlertCy: {
+      doc: 'Email forecast alert template ID (Welsh)',
+      format: String,
+      default: '',
+      env: 'EMAIL_FORECAST_ALERT_CY_TEMPLATE_ID'
+    }
+  },
+  metOfficeForecast: {
+    forecastApiUrl: {
+      doc: 'Base URL for the aqie-forecast-api service',
+      format: String,
+      default: 'http://localhost:3005',
+      env: 'FORECAST_API_URL'
+    },
+    daqiAlertThreshold: {
+      doc: 'Minimum DAQI value (inclusive) that triggers an alert',
+      format: Number,
+      default: 7,
+      env: 'DAQI_ALERT_THRESHOLD'
+    },
+    cronSchedule: {
+      doc: 'Cron expression for the daily MetOffice forecast alert job (default: 6am every day)',
+      format: String,
+      default: '0 6 * * *',
+      env: 'FORECAST_CRON_SCHEDULE'
     }
   },
   isMetricsEnabled: {

@@ -9,7 +9,7 @@ const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
 const logger = createLogger()
 
-// ✅ Load GeoJSON files using readFileSync + JSON.parse (works correctly with ES Modules)
+//  Load GeoJSON files using readFileSync + JSON.parse (works correctly with ES Modules)
 const loadGeoJSON = (filePath) => {
   try {
     return JSON.parse(readFileSync(join(__dirname, filePath), 'utf-8'))
@@ -31,7 +31,7 @@ const regions = [
   { name: 'Wales', boundary: walesBoundary },
   { name: 'Scotland', boundary: scotlandBoundary },
   { name: 'Northern Ireland', boundary: northernIrelandBoundary }
-].filter((r) => r.boundary !== null) // ✅ Skip any failed GeoJSON loads
+].filter((r) => r.boundary !== null) //  Skip any failed GeoJSON loads
 
 /**
  * Finds the region (England, Wales, Scotland, Northern Ireland) for a given lat/long.
@@ -52,9 +52,6 @@ export function findRegion(lat, long) {
 
       for (const feature of features) {
         if (booleanPointInPolygon(pt, feature)) {
-          logger.info(
-            `Region identified ${JSON.stringify({ lat, long, region: region.name })}`
-          )
           return region.name
         }
       }

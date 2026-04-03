@@ -7,14 +7,14 @@ vi.mock('node-cron', () => ({
 vi.mock('../config.js', () => ({
   config: {
     get: vi.fn((key) => {
-      if (key === 'ricardoApi.cronSchedule') return '*/30 * * * *'
+      if (key === 'metOfficeForecast.cronSchedule') return '0 6 * * *'
       return null
     })
   }
 }))
 
-vi.mock('../users/utils/pollutantAlertProcessor.js', () => ({
-  processPollutantAlerts: vi.fn()
+vi.mock('../users/utils/forecastAlertProcessor.js', () => ({
+  processForecastAlerts: vi.fn()
 }))
 
 vi.mock('../common/helpers/logging/logger.js', () => ({
@@ -25,10 +25,10 @@ vi.mock('../common/helpers/logging/logger.js', () => ({
   })
 }))
 
-describe('pollutant-alert-scheduler', () => {
-  let pollutantAlertScheduler
+describe('forecast-alert-scheduler', () => {
+  let forecastAlertScheduler
   let mockSchedule
-  let mockProcessPollutantAlerts
+  let mockProcessForecastAlerts
   let mockCronJob
   let server
   let eventHandlers
@@ -41,11 +41,11 @@ describe('pollutant-alert-scheduler', () => {
     mockSchedule = vi.mocked((await import('node-cron')).schedule)
     mockSchedule.mockReturnValue(mockCronJob)
 
-    mockProcessPollutantAlerts = vi.mocked(
-      (await import('../users/utils/pollutantAlertProcessor.js'))
-        .processPollutantAlerts
+    mockProcessForecastAlerts = vi.mocked(
+      (await import('../users/utils/forecastAlertProcessor.js'))
+        .processForecastAlerts
     )
-    mockProcessPollutantAlerts.mockResolvedValue(undefined)
+    mockProcessForecastAlerts.mockResolvedValue(undefined)
 
     eventHandlers = {}
     extHandlers = {}
@@ -62,84 +62,78 @@ describe('pollutant-alert-scheduler', () => {
       })
     }
 
-    // Re-import the module fresh each time to reset module-level cronJob variable
     vi.resetModules()
-    const mod = await import('./pollutant-alert-scheduler.js')
-    pollutantAlertScheduler = mod.pollutantAlertScheduler
+    const mod = await import('./forecast-alert-scheduler.js')
+    forecastAlertScheduler = mod.forecastAlertScheduler
   })
 
   it('should have correct plugin name and version', () => {
-    expect(pollutantAlertScheduler.plugin.name).toBe(
-      'pollutant-alert-scheduler'
-    )
-    expect(pollutantAlertScheduler.plugin.version).toBe('1.0.0')
+    expect(forecastAlertScheduler.plugin.name).toBe('forecast-alert-scheduler')
+    expect(forecastAlertScheduler.plugin.version).toBe('1.0.0')
   })
 
   it('should register start event handler on register', async () => {
-    await pollutantAlertScheduler.plugin.register(server)
+    await forecastAlertScheduler.plugin.register(server)
     expect(server.events.on).toHaveBeenCalledWith('start', expect.any(Function))
   })
 
   it('should register onPostStop extension on register', async () => {
-    await pollutantAlertScheduler.plugin.register(server)
+    await forecastAlertScheduler.plugin.register(server)
     expect(server.ext).toHaveBeenCalledWith('onPostStop', expect.any(Function))
   })
 
-  it('should run processPollutantAlerts immediately on start', async () => {
-    await pollutantAlertScheduler.plugin.register(server)
+  it('should run processForecastAlerts immediately on start', async () => {
+    await forecastAlertScheduler.plugin.register(server)
     await eventHandlers.start()
 
-    expect(mockProcessPollutantAlerts).toHaveBeenCalledWith(server.db)
+    expect(mockProcessForecastAlerts).toHaveBeenCalledWith(server.db)
   })
 
   it('should schedule cron job with configured schedule on start', async () => {
-    await pollutantAlertScheduler.plugin.register(server)
+    await forecastAlertScheduler.plugin.register(server)
     await eventHandlers.start()
 
-    expect(mockSchedule).toHaveBeenCalledWith(
-      '*/30 * * * *',
-      expect.any(Function)
-    )
+    expect(mockSchedule).toHaveBeenCalledWith('0 6 * * *', expect.any(Function))
   })
 
   it('should catch and log startup run errors without throwing', async () => {
-    mockProcessPollutantAlerts.mockRejectedValueOnce(
+    mockProcessForecastAlerts.mockRejectedValueOnce(
       new Error('Startup fetch failed')
     )
 
-    await pollutantAlertScheduler.plugin.register(server)
+    await forecastAlertScheduler.plugin.register(server)
     await expect(eventHandlers.start()).resolves.not.toThrow()
   })
 
-  it('should call processPollutantAlerts when cron job fires', async () => {
+  it('should call processForecastAlerts when cron job fires', async () => {
     let capturedCronCallback
     mockSchedule.mockImplementation((_expr, callback) => {
       capturedCronCallback = callback
       return mockCronJob
     })
 
-    await pollutantAlertScheduler.plugin.register(server)
+    await forecastAlertScheduler.plugin.register(server)
     await eventHandlers.start()
 
-    mockProcessPollutantAlerts.mockClear()
+    mockProcessForecastAlerts.mockClear()
     await capturedCronCallback()
 
-    expect(mockProcessPollutantAlerts).toHaveBeenCalledWith(server.db)
+    expect(mockProcessForecastAlerts).toHaveBeenCalledWith(server.db)
   })
 
   it('should rethrow cron job errors', async () => {
-    const cronError = new Error('DB unavailable')
+    const cronError = new Error('Forecast API timeout')
     let capturedCronCallback
     mockSchedule.mockImplementation((_expr, callback) => {
       capturedCronCallback = callback
       return mockCronJob
     })
 
-    await pollutantAlertScheduler.plugin.register(server)
+    await forecastAlertScheduler.plugin.register(server)
     await eventHandlers.start()
 
-    mockProcessPollutantAlerts.mockRejectedValueOnce(cronError)
-    await expect(capturedCronCallback()).rejects.toThrow('DB unavailable')
+    mockProcessForecastAlerts.mockRejectedValueOnce(cronError)
+    await expect(capturedCronCallback()).rejects.toThrow('Forecast API timeout')
   })
 
   it('should wrap non-Error thrown in cron callback into an Error', async () => {
@@ -149,15 +143,15 @@ describe('pollutant-alert-scheduler', () => {
       return mockCronJob
     })
 
-    await pollutantAlertScheduler.plugin.register(server)
+    await forecastAlertScheduler.plugin.register(server)
     await eventHandlers.start()
 
-    mockProcessPollutantAlerts.mockRejectedValueOnce('plain string error')
+    mockProcessForecastAlerts.mockRejectedValueOnce('plain string error')
     await expect(capturedCronCallback()).rejects.toThrow('plain string error')
   })
 
   it('should stop cron job on onPostStop', async () => {
-    await pollutantAlertScheduler.plugin.register(server)
+    await forecastAlertScheduler.plugin.register(server)
     await eventHandlers.start()
 
     extHandlers.onPostStop()
@@ -166,9 +160,8 @@ describe('pollutant-alert-scheduler', () => {
   })
 
   it('should not stop cron job on onPostStop if start never fired', async () => {
-    await pollutantAlertScheduler.plugin.register(server)
+    await forecastAlertScheduler.plugin.register(server)
 
-    // onPostStop without start — no cron job set up yet
     extHandlers.onPostStop()
 
     expect(mockCronJob.stop).not.toHaveBeenCalled()
@@ -180,7 +173,7 @@ describe('pollutant-alert-scheduler', () => {
     })
 
     await expect(
-      pollutantAlertScheduler.plugin.register(server)
+      forecastAlertScheduler.plugin.register(server)
     ).rejects.toThrow('Registration failed')
   })
 
@@ -191,7 +184,7 @@ describe('pollutant-alert-scheduler', () => {
     })
 
     await expect(
-      pollutantAlertScheduler.plugin.register(server)
+      forecastAlertScheduler.plugin.register(server)
     ).rejects.toThrow('string error')
   })
 })

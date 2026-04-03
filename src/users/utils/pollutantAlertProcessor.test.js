@@ -4,6 +4,7 @@ import {
   getMatchingUsers,
   cleanPollutantName,
   formatLocationForUrl,
+  sendAlertToUser,
   processPollutantAlerts
 } from './pollutantAlertProcessor.js'
 
@@ -217,6 +218,50 @@ describe('pollutantAlertProcessor', () => {
       ]
       expect(getMatchingUsers(usersNoLoc, 'Greater London')).toHaveLength(0)
     })
+
+    it('should handle users with undefined locations property', () => {
+      const usersNoLoc = [{ user_contact: '+447111111111', alertType: 'sms' }]
+      expect(getMatchingUsers(usersNoLoc, 'Greater London')).toHaveLength(0)
+    })
+  })
+
+  describe('sendAlertToUser', () => {
+    beforeEach(() => {
+      vi.clearAllMocks()
+    })
+
+    it('should default lang to en when userMatch has no lang', async () => {
+      const mockSend = vi.mocked(
+        (await import('./notifyServiceClient.js')).sendNotification
+      )
+      mockSend.mockResolvedValue({ notificationId: 'notif-default-lang' })
+
+      const userMatch = {
+        userContact: '+447000000001',
+        alertType: 'sms',
+        location: 'London'
+        // no lang property
+      }
+      const alertDetail = {
+        'alert-id': 999,
+        region: 'England',
+        pollutant: 'O3',
+        concentration: 100
+      }
+
+      const result = await sendAlertToUser(userMatch, alertDetail)
+
+      expect(mockSend).toHaveBeenCalledWith(
+        expect.objectContaining({
+          templateId: 'sms-template-id',
+          personalisation: expect.objectContaining({
+            checkAirQualityLink: expect.stringContaining('?lang=en')
+          })
+        }),
+        expect.any(String)
+      )
+      expect(result).toBe('notif-default-lang')
+    })
   })
 
   describe('processPollutantAlerts', () => {
@@ -246,8 +291,37 @@ describe('pollutantAlertProcessor', () => {
       expect(mockDb.collection).not.toHaveBeenCalled()
     })
 
+    it('should handle response body without member property', async () => {
+      mockFetchAlerts.mockResolvedValue({})
+
+      await processPollutantAlerts(mockDb)
+
+      expect(mockDb.collection).not.toHaveBeenCalled()
+    })
+
     it('should skip processing when no members returned', async () => {
       mockFetchAlerts.mockResolvedValue({ member: [] })
+
+      await processPollutantAlerts(mockDb)
+
+      expect(mockDb.collection).not.toHaveBeenCalled()
+    })
+
+    it('should skip processing when members exist but none pass filter', async () => {
+      mockFetchAlerts.mockResolvedValue({
+        member: [
+          {
+            samplingPointId: 1,
+            region: 'X',
+            pollutant: 'X',
+            alertText: '',
+            concentration: 0,
+            alertThreshold: null,
+            alertLevel: false,
+            validationStatus: 2
+          }
+        ]
+      })
 
       await processPollutantAlerts(mockDb)
 
@@ -281,7 +355,7 @@ describe('pollutantAlertProcessor', () => {
       }
 
       mockDb.collection.mockImplementation((name) => {
-        if (name === 'alert-details') return alertDetailsColl
+        if (name === 'pollutant-alert-processing-state') return alertDetailsColl
         return null
       })
 
@@ -330,9 +404,15 @@ describe('pollutantAlertProcessor', () => {
         })
       }
 
+      const auditColl = {
+        insertOne: vi.fn().mockResolvedValue({}),
+        updateOne: vi.fn().mockResolvedValue({})
+      }
+
       mockDb.collection.mockImplementation((name) => {
-        if (name === 'alert-details') return alertDetailsColl
+        if (name === 'pollutant-alert-processing-state') return alertDetailsColl
         if (name === 'USERS') return usersColl
+        if (name === 'pollutant-alerts-audit') return auditColl
         return null
       })
 
@@ -416,9 +496,15 @@ describe('pollutantAlertProcessor', () => {
         })
       }
 
+      const auditColl = {
+        insertOne: vi.fn().mockResolvedValue({}),
+        updateOne: vi.fn().mockResolvedValue({})
+      }
+
       mockDb.collection.mockImplementation((name) => {
-        if (name === 'alert-details') return alertDetailsColl
+        if (name === 'pollutant-alert-processing-state') return alertDetailsColl
         if (name === 'USERS') return usersColl
+        if (name === 'pollutant-alerts-audit') return auditColl
         return null
       })
 
@@ -437,6 +523,279 @@ describe('pollutantAlertProcessor', () => {
             unsubscribeLink:
               'https://aqie-front-end.test.cdp-int.defra.cloud/notify/unsubscribe-email-link?email=user%40test.com'
           })
+        }),
+        expect.any(String)
+      )
+    })
+
+    it('should log error and continue when markAlertInProgress throws', async () => {
+      mockFetchAlerts.mockResolvedValue({
+        member: [
+          {
+            samplingPointId: 800,
+            region: 'England',
+            pollutant: 'NO2',
+            alertText: 'tbc',
+            concentration: 50,
+            alertThreshold: null,
+            alertLevel: true,
+            validationStatus: 2
+          }
+        ]
+      })
+
+      const alertDetailsColl = {
+        find: vi.fn().mockReturnValue({
+          project: vi.fn().mockReturnValue({
+            toArray: vi.fn().mockResolvedValue([])
+          })
+        }),
+        updateOne: vi.fn().mockRejectedValue(new Error('DB write error'))
+      }
+
+      mockDb.collection.mockImplementation((name) => {
+        if (name === 'pollutant-alert-processing-state') return alertDetailsColl
+        return null
+      })
+
+      // Should not throw — outer catch handles it
+      await expect(processPollutantAlerts(mockDb)).resolves.not.toThrow()
+    })
+
+    it('should log warning and continue when audit insert has duplicate key (11000)', async () => {
+      mockFetchAlerts.mockResolvedValue({
+        member: [
+          {
+            samplingPointId: 900,
+            region: 'England',
+            pollutant: 'PM2.5',
+            alertText: 'tbc',
+            concentration: 55,
+            alertThreshold: null,
+            alertLevel: true,
+            validationStatus: 2
+          }
+        ]
+      })
+
+      const alertDetailsColl = {
+        find: vi.fn().mockReturnValue({
+          project: vi.fn().mockReturnValue({
+            toArray: vi.fn().mockResolvedValue([])
+          })
+        }),
+        updateOne: vi.fn().mockResolvedValue({})
+      }
+
+      const usersColl = {
+        find: vi.fn().mockReturnValue({
+          toArray: vi.fn().mockResolvedValue([
+            {
+              user_contact: '+447333333333',
+              alertType: 'sms',
+              locations: [{ location: 'Manchester', region: 'England' }]
+            }
+          ])
+        })
+      }
+
+      const dupError = Object.assign(new Error('E11000 duplicate key error'), {
+        code: 11000
+      })
+      const auditColl = {
+        insertOne: vi.fn().mockRejectedValue(dupError),
+        updateOne: vi.fn().mockResolvedValue({})
+      }
+
+      mockDb.collection.mockImplementation((name) => {
+        if (name === 'pollutant-alert-processing-state') return alertDetailsColl
+        if (name === 'USERS') return usersColl
+        if (name === 'pollutant-alerts-audit') return auditColl
+        return null
+      })
+
+      mockSendNotification.mockResolvedValue({ notificationId: 'notif-dup' })
+
+      // Should not throw — duplicate key is handled gracefully
+      await expect(processPollutantAlerts(mockDb)).resolves.not.toThrow()
+    })
+
+    it('should catch outer error when audit insert fails with non-11000 code', async () => {
+      mockFetchAlerts.mockResolvedValue({
+        member: [
+          {
+            samplingPointId: 901,
+            region: 'England',
+            pollutant: 'PM10',
+            alertText: 'tbc',
+            concentration: 70,
+            alertThreshold: null,
+            alertLevel: true,
+            validationStatus: 2
+          }
+        ]
+      })
+
+      const alertDetailsColl = {
+        find: vi.fn().mockReturnValue({
+          project: vi.fn().mockReturnValue({
+            toArray: vi.fn().mockResolvedValue([])
+          })
+        }),
+        updateOne: vi.fn().mockResolvedValue({})
+      }
+
+      const usersColl = {
+        find: vi.fn().mockReturnValue({
+          toArray: vi.fn().mockResolvedValue([
+            {
+              user_contact: '+447444444444',
+              alertType: 'sms',
+              locations: [{ location: 'Leeds', region: 'England' }]
+            }
+          ])
+        })
+      }
+
+      const dbError = Object.assign(new Error('Write conflict'), { code: 112 })
+      const auditColl = {
+        insertOne: vi.fn().mockRejectedValue(dbError),
+        updateOne: vi.fn().mockResolvedValue({})
+      }
+
+      mockDb.collection.mockImplementation((name) => {
+        if (name === 'pollutant-alert-processing-state') return alertDetailsColl
+        if (name === 'USERS') return usersColl
+        if (name === 'pollutant-alerts-audit') return auditColl
+        return null
+      })
+
+      // Non-11000 error propagates to outer catch which logs and continues
+      await expect(processPollutantAlerts(mockDb)).resolves.not.toThrow()
+    })
+
+    it('should send Welsh SMS notification using smsAlertCy template', async () => {
+      mockFetchAlerts.mockResolvedValue({
+        member: [
+          {
+            samplingPointId: 950,
+            region: 'Wales',
+            pollutant: 'NO2',
+            alertText: 'tbc',
+            concentration: 75,
+            alertThreshold: null,
+            alertLevel: true,
+            validationStatus: 2
+          }
+        ]
+      })
+
+      const alertDetailsColl = {
+        find: vi.fn().mockReturnValue({
+          project: vi.fn().mockReturnValue({
+            toArray: vi.fn().mockResolvedValue([])
+          })
+        }),
+        updateOne: vi.fn().mockResolvedValue({})
+      }
+
+      const usersColl = {
+        find: vi.fn().mockReturnValue({
+          toArray: vi.fn().mockResolvedValue([
+            {
+              user_contact: '+447888888888',
+              alertType: 'sms',
+              lang: 'cy',
+              locations: [{ location: 'Cardiff', region: 'Wales' }]
+            }
+          ])
+        })
+      }
+
+      const auditColl = {
+        insertOne: vi.fn().mockResolvedValue({}),
+        updateOne: vi.fn().mockResolvedValue({})
+      }
+
+      mockDb.collection.mockImplementation((name) => {
+        if (name === 'pollutant-alert-processing-state') return alertDetailsColl
+        if (name === 'USERS') return usersColl
+        if (name === 'pollutant-alerts-audit') return auditColl
+        return null
+      })
+
+      mockSendNotification.mockResolvedValue({ notificationId: 'notif-cy-sms' })
+
+      await processPollutantAlerts(mockDb)
+
+      expect(mockSendNotification).toHaveBeenCalledWith(
+        expect.objectContaining({
+          templateId: 'sms-template-id-cy'
+        }),
+        expect.any(String)
+      )
+    })
+
+    it('should send English email notification using emailAlert template', async () => {
+      mockFetchAlerts.mockResolvedValue({
+        member: [
+          {
+            samplingPointId: 951,
+            region: 'England',
+            pollutant: 'PM10',
+            alertText: 'tbc',
+            concentration: 80,
+            alertThreshold: null,
+            alertLevel: true,
+            validationStatus: 2
+          }
+        ]
+      })
+
+      const alertDetailsColl = {
+        find: vi.fn().mockReturnValue({
+          project: vi.fn().mockReturnValue({
+            toArray: vi.fn().mockResolvedValue([])
+          })
+        }),
+        updateOne: vi.fn().mockResolvedValue({})
+      }
+
+      const usersColl = {
+        find: vi.fn().mockReturnValue({
+          toArray: vi.fn().mockResolvedValue([
+            {
+              user_contact: 'en-user@test.com',
+              alertType: 'email',
+              lang: 'en',
+              locations: [{ location: 'Reading', region: 'England' }]
+            }
+          ])
+        })
+      }
+
+      const auditColl = {
+        insertOne: vi.fn().mockResolvedValue({}),
+        updateOne: vi.fn().mockResolvedValue({})
+      }
+
+      mockDb.collection.mockImplementation((name) => {
+        if (name === 'pollutant-alert-processing-state') return alertDetailsColl
+        if (name === 'USERS') return usersColl
+        if (name === 'pollutant-alerts-audit') return auditColl
+        return null
+      })
+
+      mockSendNotification.mockResolvedValue({
+        notificationId: 'notif-en-email'
+      })
+
+      await processPollutantAlerts(mockDb)
+
+      expect(mockSendNotification).toHaveBeenCalledWith(
+        expect.objectContaining({
+          emailAddress: 'en-user@test.com',
+          templateId: 'email-template-id'
         }),
         expect.any(String)
       )
@@ -479,9 +838,15 @@ describe('pollutantAlertProcessor', () => {
         })
       }
 
+      const auditColl = {
+        insertOne: vi.fn().mockResolvedValue({}),
+        updateOne: vi.fn().mockResolvedValue({})
+      }
+
       mockDb.collection.mockImplementation((name) => {
-        if (name === 'alert-details') return alertDetailsColl
+        if (name === 'pollutant-alert-processing-state') return alertDetailsColl
         if (name === 'USERS') return usersColl
+        if (name === 'pollutant-alerts-audit') return auditColl
         return null
       })
 
