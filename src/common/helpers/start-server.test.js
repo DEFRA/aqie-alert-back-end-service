@@ -1,3 +1,5 @@
+import { describe, test, expect, vi } from 'vitest'
+
 import hapi from '@hapi/hapi'
 
 describe('#startServer', () => {

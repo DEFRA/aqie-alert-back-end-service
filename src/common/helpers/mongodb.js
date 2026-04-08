@@ -43,4 +43,32 @@ async function createIndexes(db) {
 
   // Example of how to create a mongodb index. Remove as required
   await db.collection('example-data').createIndex({ id: 1 })
+
+  await db
+    .collection('pollutant-alert-processing-state')
+    .createIndex({ 'alert-id': 1 }, { unique: true })
+
+  await db.collection('pollutant-alerts-audit').createIndex({ 'alert-id': 1 })
+
+  await db
+    .collection('pollutant-alerts-audit')
+    .createIndex(
+      { 'alert-id': 1, user_contact: 1, location: 1 },
+      { unique: true }
+    )
+
+  await db
+    .collection('metoffice-forecast-audit')
+    .createIndex({ forecastDate: 1 })
+
+  await db
+    .collection('metoffice-forecast-audit')
+    .createIndex(
+      { forecastDate: 1, user_contact: 1, location: 1, region: 1 },
+      { unique: true }
+    )
+
+  await db
+    .collection('forecast-schedule-state')
+    .createIndex({ forecastDate: 1 }, { unique: true })
 }

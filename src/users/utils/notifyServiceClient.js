@@ -96,7 +96,7 @@ export async function sendNotification(payload, requestId) {
       })}`
     )
 
-    return response
+    return responseBody
   } catch (err) {
     const duration = Date.now() - startTime
 

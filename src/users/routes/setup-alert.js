@@ -27,8 +27,20 @@ const setupAlert = {
             }
           })}`
         )
-        const { phoneNumber, emailAddress, alertType, location, lat, long } =
-          value
+        const {
+          phoneNumber,
+          emailAddress,
+          alertType,
+          location,
+          lat,
+          long,
+          lang
+        } = value
+
+        if (!lang || !['en', 'cy'].includes(lang)) {
+          logger.warn(`Invalid lang provided ${JSON.stringify({ lang })}`)
+          throw Boom.badRequest('lang must be en or cy')
+        }
 
         if (!alertType || !['sms', 'email'].includes(alertType)) {
           logger.warn(

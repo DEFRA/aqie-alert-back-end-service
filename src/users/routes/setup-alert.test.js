@@ -51,6 +51,75 @@ describe('setup-alert route', () => {
       validatePayload = setupAlert.options.validate.payload
     })
 
+    describe('lang validation', () => {
+      it('should reject missing lang', () => {
+        const payload = {
+          alertType: 'sms',
+          phoneNumber: '07123456789',
+          location: 'London',
+          lat: 51.5074,
+          long: -0.1278
+        }
+
+        expect(() => validatePayload(payload, mockOptions)).toThrow(
+          Boom.badRequest('lang must be en or cy')
+        )
+      })
+
+      it('should reject invalid lang value', () => {
+        const payload = {
+          alertType: 'sms',
+          phoneNumber: '07123456789',
+          location: 'London',
+          lat: 51.5074,
+          long: -0.1278,
+          lang: 'fr'
+        }
+
+        expect(() => validatePayload(payload, mockOptions)).toThrow(
+          Boom.badRequest('lang must be en or cy')
+        )
+      })
+
+      it('should accept lang en', async () => {
+        const { validateContactInfo } = await import(
+          '../utils/validationUtils.js'
+        )
+        validateContactInfo.mockReturnValue({ isValid: true })
+
+        const payload = {
+          alertType: 'sms',
+          phoneNumber: '07123456789',
+          location: 'London',
+          lat: 51.5074,
+          long: -0.1278,
+          lang: 'en'
+        }
+
+        const result = validatePayload(payload, mockOptions)
+        expect(result).toEqual(payload)
+      })
+
+      it('should accept lang cy', async () => {
+        const { validateContactInfo } = await import(
+          '../utils/validationUtils.js'
+        )
+        validateContactInfo.mockReturnValue({ isValid: true })
+
+        const payload = {
+          alertType: 'sms',
+          phoneNumber: '07123456789',
+          location: 'London',
+          lat: 51.5074,
+          long: -0.1278,
+          lang: 'cy'
+        }
+
+        const result = validatePayload(payload, mockOptions)
+        expect(result).toEqual(payload)
+      })
+    })
+
     describe('alertType validation', () => {
       it('should accept valid alertType "sms"', async () => {
         const { validateContactInfo } = await import(
@@ -63,7 +132,8 @@ describe('setup-alert route', () => {
           phoneNumber: '07123456789',
           location: 'London',
           lat: 51.5074,
-          long: -0.1278
+          long: -0.1278,
+          lang: 'en'
         }
 
         const result = validatePayload(payload, mockOptions)
@@ -81,7 +151,8 @@ describe('setup-alert route', () => {
           emailAddress: 'test@example.com',
           location: 'London',
           lat: 51.5074,
-          long: -0.1278
+          long: -0.1278,
+          lang: 'en'
         }
 
         const result = validatePayload(payload, mockOptions)
@@ -93,7 +164,8 @@ describe('setup-alert route', () => {
           phoneNumber: '07123456789',
           location: 'London',
           lat: 51.5074,
-          long: -0.1278
+          long: -0.1278,
+          lang: 'en'
         }
 
         expect(() => validatePayload(payload, mockOptions)).toThrow(
@@ -107,7 +179,8 @@ describe('setup-alert route', () => {
           phoneNumber: '07123456789',
           location: 'London',
           lat: 51.5074,
-          long: -0.1278
+          long: -0.1278,
+          lang: 'en'
         }
 
         expect(() => validatePayload(payload, mockOptions)).toThrow(
@@ -128,7 +201,8 @@ describe('setup-alert route', () => {
           phoneNumber: '07123456789',
           location: 'London',
           lat: 51.5074,
-          long: -0.1278
+          long: -0.1278,
+          lang: 'en'
         }
 
         const result = validatePayload(payload, mockOptions)
@@ -151,7 +225,8 @@ describe('setup-alert route', () => {
           emailAddress: 'test@example.com',
           location: 'London',
           lat: 51.5074,
-          long: -0.1278
+          long: -0.1278,
+          lang: 'en'
         }
 
         const result = validatePayload(payload, mockOptions)
@@ -177,7 +252,8 @@ describe('setup-alert route', () => {
           phoneNumber: '123',
           location: 'London',
           lat: 51.5074,
-          long: -0.1278
+          long: -0.1278,
+          lang: 'en'
         }
 
         expect(() => validatePayload(payload, mockOptions)).toThrow(
@@ -200,7 +276,8 @@ describe('setup-alert route', () => {
           phoneNumber: '07123456789',
           location: 'London, City of Westminster',
           lat: 51.5074,
-          long: -0.1278
+          long: -0.1278,
+          lang: 'en'
         }
 
         const result = validatePayload(payload, mockOptions)
@@ -212,7 +289,8 @@ describe('setup-alert route', () => {
           alertType: 'sms',
           phoneNumber: '07123456789',
           lat: 51.5074,
-          long: -0.1278
+          long: -0.1278,
+          lang: 'en'
         }
 
         expect(() => validatePayload(payload, mockOptions)).toThrow(
@@ -225,7 +303,8 @@ describe('setup-alert route', () => {
           alertType: 'sms',
           phoneNumber: '07123456789',
           location: 'London',
-          long: -0.1278
+          long: -0.1278,
+          lang: 'en'
         }
 
         expect(() => validatePayload(payload, mockOptions)).toThrow(
@@ -238,7 +317,8 @@ describe('setup-alert route', () => {
           alertType: 'sms',
           phoneNumber: '07123456789',
           location: 'London',
-          lat: 51.5074
+          lat: 51.5074,
+          lang: 'en'
         }
 
         expect(() => validatePayload(payload, mockOptions)).toThrow(
@@ -252,7 +332,8 @@ describe('setup-alert route', () => {
           phoneNumber: '07123456789',
           location: 'London',
           lat: 0,
-          long: -0.1278
+          long: -0.1278,
+          lang: 'en'
         }
 
         const result = validatePayload(payload, mockOptions)
@@ -265,7 +346,8 @@ describe('setup-alert route', () => {
           phoneNumber: '07123456789',
           location: 'London',
           lat: 51.5074,
-          long: 0
+          long: 0,
+          lang: 'en'
         }
 
         const result = validatePayload(payload, mockOptions)
@@ -285,7 +367,8 @@ describe('setup-alert route', () => {
           alertType: 'sms',
           location: 'London, City of Westminster',
           lat: 51.5074,
-          long: -0.1278
+          long: -0.1278,
+          lang: 'en'
         }
 
         const result = validatePayload(payload, mockOptions)
@@ -303,7 +386,8 @@ describe('setup-alert route', () => {
           alertType: 'email',
           location: 'Manchester, Greater Manchester',
           lat: 53.4808,
-          long: -2.2426
+          long: -2.2426,
+          lang: 'cy'
         }
 
         const result = validatePayload(payload, mockOptions)
@@ -321,7 +405,8 @@ describe('setup-alert route', () => {
           alertType: 'sms',
           location: 'Little London, Buckinghamshire',
           lat: 51.6234,
-          long: -0.7345
+          long: -0.7345,
+          lang: 'en'
         }
 
         const result = validatePayload(payload, mockOptions)
@@ -348,7 +433,8 @@ describe('setup-alert route', () => {
           alertType: 'sms',
           location: 'London',
           lat: 51.5074,
-          long: -0.1278
+          long: -0.1278,
+          lang: 'en'
         }
 
         validatePayload(payload, mockOptions)
