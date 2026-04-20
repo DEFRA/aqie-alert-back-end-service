@@ -4,9 +4,11 @@ import { config } from '../../config.js'
 import { createLogger } from '../../common/helpers/logging/logger.js'
 
 const logger = createLogger()
+const POLLUTANT_ALERT_STATUS_COLLECTION = 'pollutant-alert-processing-state'
+const DB_ERROR_CODE = 11000
 
 function cleanPollutantName(pollutant) {
-  return pollutant.replace(/<[^>]*>/g, '')
+  return pollutant.replaceAll(/<[^>]{0,200}>/g, '')
 }
 
 function filterValidAlerts(members) {
@@ -24,7 +26,7 @@ function filterValidAlerts(members) {
 
 async function getAlreadyProcessedAlertIds(db) {
   const existing = await db
-    .collection('pollutant-alert-processing-state')
+    .collection(POLLUTANT_ALERT_STATUS_COLLECTION)
     .find({ status: { $in: ['in-progress', 'processed'] } })
     .project({ 'alert-id': 1 })
     .toArray()
@@ -32,7 +34,7 @@ async function getAlreadyProcessedAlertIds(db) {
 }
 
 async function markAlertInProgress(db, alertDetail) {
-  await db.collection('pollutant-alert-processing-state').updateOne(
+  await db.collection(POLLUTANT_ALERT_STATUS_COLLECTION).updateOne(
     { 'alert-id': alertDetail['alert-id'] },
     {
       $set: {
@@ -66,7 +68,7 @@ async function insertPollutantAuditEntry(db, alertDetail, userMatch) {
   try {
     await db.collection('pollutant-alerts-audit').insertOne(entry)
   } catch (err) {
-    if (err.code === 11000) {
+    if (err.code === DB_ERROR_CODE) {
       logger.warn(
         `[Pollutant] Duplicate audit entry skipped ${JSON.stringify({ 'alert-id': alertDetail['alert-id'], user_contact: userMatch.userContact, location: userMatch.location })}`
       )
@@ -101,7 +103,7 @@ async function updatePollutantAuditEntry(
 }
 
 async function markAlertProcessed(db, alertId) {
-  await db.collection('pollutant-alert-processing-state').updateOne(
+  await db.collection(POLLUTANT_ALERT_STATUS_COLLECTION).updateOne(
     { 'alert-id': alertId },
     {
       $set: {
@@ -113,35 +115,30 @@ async function markAlertProcessed(db, alertId) {
 }
 
 function formatLocationForUrl(location) {
-  if (!location) return ''
+  if (!location) {
+    return ''
+  }
   const trimmed = location.trim()
   if (trimmed.includes(',')) {
     return trimmed
       .split(',')
-      .map((part) => part.trim().toLowerCase().replace(/\s+/g, '-'))
+      .map((part) => part.trim().toLowerCase().replaceAll(/\s+/g, '-'))
       .join('_')
   }
-  return trimmed.toLowerCase().replace(/\s+/g, '')
+  return trimmed.toLowerCase().replaceAll(/\s+/g, '')
 }
 
 function getMatchingUsers(users, alertRegion) {
-  const results = []
-  for (const user of users) {
-    const matchingLocations = (user.locations || []).filter(
-      (loc) => loc.region === alertRegion
-    )
-    if (matchingLocations.length > 0) {
-      for (const loc of matchingLocations) {
-        results.push({
-          userContact: user.user_contact,
-          alertType: user.alertType,
-          location: loc.location,
-          lang: user.lang || 'en'
-        })
-      }
-    }
-  }
-  return results
+  return users.flatMap((user) =>
+    (user.locations ?? [])
+      .filter((loc) => loc.region === alertRegion)
+      .map((loc) => ({
+        userContact: user.user_contact,
+        alertType: user.alertType,
+        location: loc.location,
+        lang: user.lang ?? 'en'
+      }))
+  )
 }
 
 function getTemplateId(alertType, lang) {
@@ -193,6 +190,56 @@ async function sendAlertToUser(userMatch, alertDetail) {
   return notificationId
 }
 
+async function processAlertForUsers(db, alertDetail) {
+  try {
+    await markAlertInProgress(db, alertDetail)
+
+    const users = await db
+      .collection('USERS')
+      .find({ 'locations.region': alertDetail.region })
+      .toArray()
+
+    const matchedUsers = getMatchingUsers(users, alertDetail.region)
+    logger.info(
+      `[Pollutant] Alert ${alertDetail['alert-id']}: matched ${matchedUsers.length} user-location pairs in region "${alertDetail.region}"`
+    )
+
+    let allSent = true
+    for (const userMatch of matchedUsers) {
+      await insertPollutantAuditEntry(db, alertDetail, userMatch)
+      try {
+        const notificationId = await sendAlertToUser(userMatch, alertDetail)
+        await updatePollutantAuditEntry(
+          db,
+          alertDetail['alert-id'],
+          userMatch.userContact,
+          userMatch.location,
+          notificationId
+        )
+        logger.info(
+          `[Pollutant] Notification sent for alert ${alertDetail['alert-id']} to ${userMatch.alertType} user, notificationId: ${notificationId}`
+        )
+      } catch (err) {
+        allSent = false
+        logger.error(
+          `[Pollutant] Failed to send notification for alert ${alertDetail['alert-id']} ${JSON.stringify({ alertType: userMatch.alertType, error: err.message })}`
+        )
+      }
+    }
+
+    if (allSent) {
+      await markAlertProcessed(db, alertDetail['alert-id'])
+      logger.info(
+        `[Pollutant] Alert ${alertDetail['alert-id']} marked as processed`
+      )
+    }
+  } catch (err) {
+    logger.error(
+      `[Pollutant] Error processing alert ${alertDetail['alert-id']} ${JSON.stringify({ error: err.message })}`
+    )
+  }
+}
+
 export async function processPollutantAlerts(db) {
   logger.info('[Pollutant] Starting pollutant alert processing cycle')
 
@@ -206,7 +253,7 @@ export async function processPollutantAlerts(db) {
     return
   }
 
-  const members = alertData.member || []
+  const members = alertData.member ?? []
   if (members.length === 0) {
     logger.info('[Pollutant] No alert members returned from Ricardo API')
     return
@@ -238,58 +285,7 @@ export async function processPollutantAlerts(db) {
   }
 
   for (const alertDetail of newAlerts) {
-    try {
-      await markAlertInProgress(db, alertDetail)
-
-      const users = await db
-        .collection('USERS')
-        .find({ 'locations.region': alertDetail.region })
-        .toArray()
-
-      const matchedUsers = getMatchingUsers(users, alertDetail.region)
-      logger.info(
-        `[Pollutant] Alert ${alertDetail['alert-id']}: matched ${matchedUsers.length} user-location pairs in region "${alertDetail.region}"`
-      )
-
-      let allSent = true
-      for (const userMatch of matchedUsers) {
-        await insertPollutantAuditEntry(db, alertDetail, userMatch)
-        try {
-          const notificationId = await sendAlertToUser(userMatch, alertDetail)
-          await updatePollutantAuditEntry(
-            db,
-            alertDetail['alert-id'],
-            userMatch.userContact,
-            userMatch.location,
-            notificationId
-          )
-          logger.info(
-            `[Pollutant] Notification sent for alert ${alertDetail['alert-id']} to ${userMatch.alertType} user, notificationId: ${notificationId}`
-          )
-        } catch (err) {
-          allSent = false
-          logger.error(
-            `[Pollutant] Failed to send notification for alert ${alertDetail['alert-id']} ${JSON.stringify(
-              {
-                alertType: userMatch.alertType,
-                error: err.message
-              }
-            )}`
-          )
-        }
-      }
-
-      if (allSent) {
-        await markAlertProcessed(db, alertDetail['alert-id'])
-        logger.info(
-          `[Pollutant] Alert ${alertDetail['alert-id']} marked as processed`
-        )
-      }
-    } catch (err) {
-      logger.error(
-        `[Pollutant] Error processing alert ${alertDetail['alert-id']} ${JSON.stringify({ error: err.message })}`
-      )
-    }
+    await processAlertForUsers(db, alertDetail)
   }
 
   logger.info('[Pollutant] Pollutant alert processing cycle completed')

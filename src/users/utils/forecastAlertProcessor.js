@@ -4,6 +4,7 @@ import { findRegion } from './regionFinder.js'
 import { maskPhoneNumber, maskEmail } from './maskingUtils.js'
 import { config } from '../../config.js'
 import { createLogger } from '../../common/helpers/logging/logger.js'
+import { DB_ERROR_CODE } from './constants.js'
 
 const logger = createLogger()
 
@@ -49,7 +50,9 @@ function groupAlertsByRegion(alertIdentifiedArray) {
   const seen = new Set()
   for (const item of alertIdentifiedArray) {
     const { region } = item
-    if (region !== 'Unknown') seen.add(region)
+    if (region !== 'Unknown') {
+      seen.add(region)
+    }
   }
   return Array.from(seen).map((region) => ({ region }))
 }
@@ -66,15 +69,17 @@ function getDaqiLabel() {
  * Matches the same logic used in pollutantAlertProcessor.
  */
 function formatLocationForUrl(location) {
-  if (!location) return ''
+  if (!location) {
+    return ''
+  }
   const trimmed = location.trim()
   if (trimmed.includes(',')) {
     return trimmed
       .split(',')
-      .map((part) => part.trim().toLowerCase().replace(/\s+/g, '-'))
+      .map((part) => part.trim().toLowerCase().replaceAll(/\s+/g, '-'))
       .join('_')
   }
-  return trimmed.toLowerCase().replace(/\s+/g, '')
+  return trimmed.toLowerCase().replaceAll(/\s+/g, '')
 }
 
 /**
@@ -184,7 +189,7 @@ async function insertAuditEntries(db, entries) {
     try {
       await db.collection('metoffice-forecast-audit').insertOne(entry)
     } catch (err) {
-      if (err.code === 11000) {
+      if (err.code === DB_ERROR_CODE) {
         logger.warn(
           `[Forecast] Duplicate audit entry skipped ${JSON.stringify({ forecastDate: entry.forecastDate, user_contact: entry.user_contact, location: entry.location, region: entry.region })}`
         )

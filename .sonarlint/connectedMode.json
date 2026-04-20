@@ -1,4 +1,5 @@
 {
   "sonarCloudOrganization": "defra",
-  "projectKey": "DEFRA_aqie-alert-back-end-service"
+  "projectKey": "DEFRA_aqie-alert-back-end-service",
+  "region": "EU"
 }

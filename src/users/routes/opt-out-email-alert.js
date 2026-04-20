@@ -2,6 +2,7 @@ import Boom from '@hapi/boom'
 import { optOutEmailAlertHandler } from '../controllers/optOutEmailAlertController.js'
 import { createLogger } from '../../common/helpers/logging/logger.js'
 import { maskEmail } from '../utils/maskingUtils.js'
+import { isValidEmail } from '../utils/validationUtils.js'
 
 const logger = createLogger()
 
@@ -24,8 +25,7 @@ const optOutEmailAlert = {
           throw Boom.badRequest('emailAddress is required')
         }
 
-        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
-        if (!emailRegex.test(emailAddress)) {
+        if (!isValidEmail(emailAddress)) {
           logger.warn(
             `Invalid email format ${JSON.stringify({ emailAddress: maskEmail(emailAddress) })}`
           )

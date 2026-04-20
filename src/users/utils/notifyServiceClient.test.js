@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { sendNotification } from './notifyServiceClient.js'
+import { MINUS_FOUR } from './constants.js'
 
 // Mock dependencies
 vi.mock('undici', () => ({
@@ -10,7 +11,7 @@ vi.mock('../../config.js', () => ({
   config: {
     get: vi.fn((key) => {
       if (key === 'notification.serviceUrl') {
-        return 'http://localhost:3000/send-notification'
+        return localhostSendNotificationUrl
       }
       return null
     })
@@ -26,10 +27,17 @@ vi.mock('../../common/helpers/logging/logger.js', () => ({
 }))
 
 vi.mock('./maskingUtils.js', () => ({
-  maskPhoneNumber: vi.fn((phone) => (phone ? '***' + phone.slice(-4) : phone)),
+  maskPhoneNumber: vi.fn((phone) =>
+    phone ? '***' + phone.slice(MINUS_FOUR) : phone
+  ),
   maskEmail: vi.fn((email) => (email ? email.split('@')[0] + '@***' : email)),
-  maskTemplateId: vi.fn((id) => (id ? '***' + id.slice(-4) : id))
+  maskTemplateId: vi.fn((id) => (id ? '***' + id.slice(MINUS_FOUR) : id))
 }))
+
+const localhostSendNotificationUrl = 'http://localhost:3000/send-notification'
+const testRequestId = 'test-request-id'
+const testEmail = 'test@example.com'
+const templateId = 'template-id'
 
 describe('notifyServiceClient', () => {
   let mockFetch
@@ -58,33 +66,30 @@ describe('notifyServiceClient', () => {
         personalisation: { location: 'London' }
       }
 
-      const result = await sendNotification(payload, 'test-request-id')
+      const result = await sendNotification(payload, testRequestId)
 
-      expect(mockFetch).toHaveBeenCalledWith(
-        'http://localhost:3000/send-notification',
-        {
-          method: 'POST',
-          headers: {
-            'content-type': 'application/json',
-            'x-request-id': 'test-request-id'
-          },
-          body: JSON.stringify(payload)
-        }
-      )
+      expect(mockFetch).toHaveBeenCalledWith(localhostSendNotificationUrl, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-request-id': testRequestId
+        },
+        body: JSON.stringify(payload)
+      })
       expect(result).toEqual({ success: true })
     })
 
     it('should send email notification successfully', async () => {
       const payload = {
-        emailAddress: 'test@example.com',
+        emailAddress: testEmail,
         templateId: 'email-template-id',
         personalisation: { location: 'Manchester' }
       }
 
-      const result = await sendNotification(payload, 'test-request-id')
+      const result = await sendNotification(payload, testRequestId)
 
       expect(mockFetch).toHaveBeenCalledWith(
-        'http://localhost:3000/send-notification',
+        localhostSendNotificationUrl,
         expect.objectContaining({
           body: JSON.stringify(payload)
         })
@@ -95,7 +100,7 @@ describe('notifyServiceClient', () => {
     it('should generate request ID when not provided', async () => {
       const payload = {
         phoneNumber: '07123456789',
-        templateId: 'template-id'
+        templateId: templateId
       }
 
       await sendNotification(payload)
@@ -104,7 +109,7 @@ describe('notifyServiceClient', () => {
         expect.any(String),
         expect.objectContaining({
           headers: expect.objectContaining({
-            'x-request-id': expect.stringMatching(/^notify-\d+-[a-z0-9]+$/)
+            'x-request-id': expect.stringMatching(/^notify-[0-9a-f-]{36}$/)
           })
         })
       )
@@ -120,9 +125,9 @@ describe('notifyServiceClient', () => {
 
       const payload = { phoneNumber: '123', templateId: 'invalid' }
 
-      await expect(
-        sendNotification(payload, 'test-request-id')
-      ).rejects.toThrow('Notification service error: 400 - Invalid payload')
+      await expect(sendNotification(payload, testRequestId)).rejects.toThrow(
+        'Notification service error: 400 - Invalid payload'
+      )
     })
 
     it('should handle 404 Not Found', async () => {
@@ -136,9 +141,9 @@ describe('notifyServiceClient', () => {
         templateId: 'missing-template'
       }
 
-      await expect(
-        sendNotification(payload, 'test-request-id')
-      ).rejects.toThrow('Notification service error: 404 - Template not found')
+      await expect(sendNotification(payload, testRequestId)).rejects.toThrow(
+        'Notification service error: 404 - Template not found'
+      )
     })
 
     it('should handle 500 Internal Server Error', async () => {
@@ -147,11 +152,11 @@ describe('notifyServiceClient', () => {
       mockResponse.statusText = 'Internal Server Error'
       mockResponse.text.mockResolvedValue('Service unavailable')
 
-      const payload = { phoneNumber: '07123456789', templateId: 'template-id' }
+      const payload = { phoneNumber: '07123456789', templateId: templateId }
 
-      await expect(
-        sendNotification(payload, 'test-request-id')
-      ).rejects.toThrow('Notification service error: 500 - Service unavailable')
+      await expect(sendNotification(payload, testRequestId)).rejects.toThrow(
+        'Notification service error: 500 - Service unavailable'
+      )
     })
   })
 
@@ -161,11 +166,11 @@ describe('notifyServiceClient', () => {
       connectionError.code = 'ECONNREFUSED'
       mockFetch.mockRejectedValue(connectionError)
 
-      const payload = { phoneNumber: '07123456789', templateId: 'template-id' }
+      const payload = { phoneNumber: '07123456789', templateId: templateId }
 
-      await expect(
-        sendNotification(payload, 'test-request-id')
-      ).rejects.toThrow('Connection refused')
+      await expect(sendNotification(payload, testRequestId)).rejects.toThrow(
+        'Connection refused'
+      )
     })
 
     it('should handle timeout error', async () => {
@@ -173,11 +178,11 @@ describe('notifyServiceClient', () => {
       timeoutError.code = 'ETIMEDOUT'
       mockFetch.mockRejectedValue(timeoutError)
 
-      const payload = { phoneNumber: '07123456789', templateId: 'template-id' }
+      const payload = { phoneNumber: '07123456789', templateId: templateId }
 
-      await expect(
-        sendNotification(payload, 'test-request-id')
-      ).rejects.toThrow('Request timeout')
+      await expect(sendNotification(payload, testRequestId)).rejects.toThrow(
+        'Request timeout'
+      )
     })
 
     it('should handle unexpected network errors', async () => {
@@ -185,11 +190,11 @@ describe('notifyServiceClient', () => {
       networkError.code = 'ENETWORK'
       mockFetch.mockRejectedValue(networkError)
 
-      const payload = { phoneNumber: '07123456789', templateId: 'template-id' }
+      const payload = { phoneNumber: '07123456789', templateId: templateId }
 
-      await expect(
-        sendNotification(payload, 'test-request-id')
-      ).rejects.toThrow('Network error')
+      await expect(sendNotification(payload, testRequestId)).rejects.toThrow(
+        'Network error'
+      )
     })
   })
 
@@ -199,8 +204,8 @@ describe('notifyServiceClient', () => {
         '{"messageId": "msg-123", "status": "sent"}'
       )
 
-      const payload = { phoneNumber: '07123456789', templateId: 'template-id' }
-      const result = await sendNotification(payload, 'test-request-id')
+      const payload = { phoneNumber: '07123456789', templateId: templateId }
+      const result = await sendNotification(payload, testRequestId)
 
       expect(result).toEqual({ messageId: 'msg-123', status: 'sent' })
     })
@@ -208,8 +213,8 @@ describe('notifyServiceClient', () => {
     it('should return null on empty response body', async () => {
       mockResponse.text.mockResolvedValue('')
 
-      const payload = { phoneNumber: '07123456789', templateId: 'template-id' }
-      const result = await sendNotification(payload, 'test-request-id')
+      const payload = { phoneNumber: '07123456789', templateId: templateId }
+      const result = await sendNotification(payload, testRequestId)
 
       expect(result).toBeNull()
     })
@@ -217,8 +222,8 @@ describe('notifyServiceClient', () => {
     it('should return fallback string on invalid JSON response', async () => {
       mockResponse.text.mockResolvedValue('invalid json response')
 
-      const payload = { phoneNumber: '07123456789', templateId: 'template-id' }
-      const result = await sendNotification(payload, 'test-request-id')
+      const payload = { phoneNumber: '07123456789', templateId: templateId }
+      const result = await sendNotification(payload, testRequestId)
 
       expect(result).toBe('Unable to parse response')
     })
@@ -226,8 +231,8 @@ describe('notifyServiceClient', () => {
     it('should return fallback string when response text read fails', async () => {
       mockResponse.text.mockRejectedValue(new Error('Failed to read response'))
 
-      const payload = { phoneNumber: '07123456789', templateId: 'template-id' }
-      const result = await sendNotification(payload, 'test-request-id')
+      const payload = { phoneNumber: '07123456789', templateId: templateId }
+      const result = await sendNotification(payload, testRequestId)
 
       expect(result).toBe('Unable to parse response')
     })
@@ -235,7 +240,7 @@ describe('notifyServiceClient', () => {
 
   describe('Request configuration', () => {
     it('should set correct headers', async () => {
-      const payload = { phoneNumber: '07123456789', templateId: 'template-id' }
+      const payload = { phoneNumber: '07123456789', templateId: templateId }
 
       await sendNotification(payload, 'custom-request-id')
 
@@ -254,14 +259,14 @@ describe('notifyServiceClient', () => {
     it('should serialize payload correctly', async () => {
       const payload = {
         phoneNumber: '07123456789',
-        templateId: 'template-id',
+        templateId: templateId,
         personalisation: {
           location: 'London, City of Westminster',
           userName: 'Test User'
         }
       }
 
-      await sendNotification(payload, 'test-request-id')
+      await sendNotification(payload, testRequestId)
 
       expect(mockFetch).toHaveBeenCalledWith(
         expect.any(String),
@@ -272,12 +277,12 @@ describe('notifyServiceClient', () => {
     })
 
     it('should use configured service URL', async () => {
-      const payload = { phoneNumber: '07123456789', templateId: 'template-id' }
+      const payload = { phoneNumber: '07123456789', templateId: templateId }
 
-      await sendNotification(payload, 'test-request-id')
+      await sendNotification(payload, testRequestId)
 
       expect(mockFetch).toHaveBeenCalledWith(
-        'http://localhost:3000/send-notification',
+        localhostSendNotificationUrl,
         expect.any(Object)
       )
     })
@@ -291,14 +296,14 @@ describe('notifyServiceClient', () => {
 
       const payload = {
         phoneNumber: '07123456789',
-        emailAddress: 'test@example.com',
+        emailAddress: testEmail,
         templateId: 'secret-template-id'
       }
 
-      await sendNotification(payload, 'test-request-id')
+      await sendNotification(payload, testRequestId)
 
       expect(maskPhoneNumber).toHaveBeenCalledWith('07123456789')
-      expect(maskEmail).toHaveBeenCalledWith('test@example.com')
+      expect(maskEmail).toHaveBeenCalledWith(testEmail)
       expect(maskTemplateId).toHaveBeenCalledWith('secret-template-id')
     })
   })

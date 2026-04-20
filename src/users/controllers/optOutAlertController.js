@@ -1,5 +1,10 @@
 import { createLogger } from '../../common/helpers/logging/logger.js'
 import { maskPhoneNumber } from '../utils/maskingUtils.js'
+import {
+  USER_NOT_FOUND_STATUS_CODE,
+  STATUS_OK,
+  INTERNAL_SERVER_ERROR
+} from '../utils/constants.js'
 
 const logger = createLogger()
 
@@ -25,7 +30,7 @@ export async function optOutAlertHandler(request, h) {
           success: false,
           error: 'User not found'
         })
-        .code(404)
+        .code(USER_NOT_FOUND_STATUS_CODE)
     }
 
     logger.info(
@@ -37,7 +42,7 @@ export async function optOutAlertHandler(request, h) {
         success: true,
         phoneNumber
       })
-      .code(200)
+      .code(STATUS_OK)
   } catch (err) {
     logger.error(
       `Opt-out-sms alert failed ${JSON.stringify({ err: err.message, phoneNumber: maskPhoneNumber(phoneNumber) })}`
@@ -48,6 +53,6 @@ export async function optOutAlertHandler(request, h) {
         success: false,
         error: 'Failed to opt-out-sms'
       })
-      .code(500)
+      .code(INTERNAL_SERVER_ERROR)
   }
 }

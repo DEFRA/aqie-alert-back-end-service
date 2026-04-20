@@ -1,6 +1,8 @@
 import Boom from '@hapi/boom'
 import { optOutEmailAlert } from './opt-out-email-alert.js'
 
+const INVALID_EMAIL_FORMAT = 'Invalid email format'
+
 describe('optOutEmailAlert route validation', () => {
   const validatePayload = optOutEmailAlert.options.validate.payload
 
@@ -23,16 +25,14 @@ describe('optOutEmailAlert route validation', () => {
 
   it('should throw Forbidden if emailAddress is invalid format', () => {
     expect(() => validatePayload({ emailAddress: 'invalid-email' })).toThrow(
-      Boom.forbidden('Invalid email format')
+      Boom.forbidden(INVALID_EMAIL_FORMAT)
     )
-    expect(() => validatePayload({ emailAddress: 'foo@bar' })).toThrow(
-      Boom.forbidden('Invalid email format')
-    )
+    // GDS-aligned regex: foo@bar (no dot in domain) is considered valid
     expect(() => validatePayload({ emailAddress: 'foo@bar.' })).toThrow(
-      Boom.forbidden('Invalid email format')
+      Boom.forbidden(INVALID_EMAIL_FORMAT)
     )
     expect(() => validatePayload({ emailAddress: 'foo@.com' })).toThrow(
-      Boom.forbidden('Invalid email format')
+      Boom.forbidden(INVALID_EMAIL_FORMAT)
     )
   })
 })

@@ -1,6 +1,9 @@
 import { createLogger } from '../../common/helpers/logging/logger.js'
+import { maskPhoneNumber, maskEmail } from './maskingUtils.js'
 
 const logger = createLogger()
+const CLEAN_NUMBER_ELEVEN = 11
+const CLEAN_NUMBER_TWELVE = 12
 
 /**
  * Normalizes UK mobile number to international format
@@ -16,7 +19,10 @@ export function normalizePhoneNumber(phoneNumber) {
   const cleanNumber = phoneNumber.replaceAll(/\D/g, '')
 
   // Convert 07 format to +44 format (mobile only)
-  if (cleanNumber.startsWith('07') && cleanNumber.length === 11) {
+  if (
+    cleanNumber.startsWith('07') &&
+    cleanNumber.length === CLEAN_NUMBER_ELEVEN
+  ) {
     return '+44' + cleanNumber.substring(1) // 07896543210 -> +447896543210
   }
 
@@ -34,8 +40,8 @@ export function isValidEmail(email) {
     return false
   }
 
-  // Basic email regex pattern
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+  // GDS-aligned email regex — bounded quantifiers prevent super-linear backtracking (S5852); lookahead/behind reject leading/trailing dots in domain
+  const emailRegex = /^[^\s@]{1,256}@(?!\.)[^\s@]{1,256}(?<!\.)$/
   return emailRegex.test(email.trim())
 }
 
@@ -57,10 +63,15 @@ export function isValidPhoneNumber(phoneNumber) {
   // - +447xxxxxxxxx (13 digits with +44)
 
   if (phoneNumber.startsWith('+44')) {
-    return cleanNumber.length === 12 && cleanNumber.startsWith('447')
+    return (
+      cleanNumber.length === CLEAN_NUMBER_TWELVE &&
+      cleanNumber.startsWith('447')
+    )
   }
 
-  return cleanNumber.length === 11 && cleanNumber.startsWith('07')
+  return (
+    cleanNumber.length === CLEAN_NUMBER_ELEVEN && cleanNumber.startsWith('07')
+  )
 }
 
 /**
@@ -83,7 +94,7 @@ export function validateContactInfo(alertType, phoneNumber, emailAddress) {
       result.error =
         'Invalid phone number format. Please provide a valid UK phone number'
       logger.warn(
-        { phoneNumber: phoneNumber?.substring(0, 3) + '***' },
+        { phoneNumber: maskPhoneNumber(phoneNumber) },
         'Invalid phone number format'
       )
       return result
@@ -100,7 +111,7 @@ export function validateContactInfo(alertType, phoneNumber, emailAddress) {
       result.error =
         'Invalid email address format. Please provide a valid email address'
       logger.warn(
-        { emailAddress: emailAddress?.split('@')[0] + '@***' },
+        { emailAddress: maskEmail(emailAddress) },
         'Invalid email address format'
       )
       return result

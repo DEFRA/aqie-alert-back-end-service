@@ -1,18 +1,18 @@
-import { readFileSync } from 'fs'
-import { fileURLToPath } from 'url'
-import { dirname, join } from 'path'
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+import { dirname, join } from 'node:path'
 import booleanPointInPolygon from '@turf/boolean-point-in-polygon'
 import { point } from '@turf/helpers'
 import { createLogger } from '../../common/helpers/logging/logger.js'
 
-const __filename = fileURLToPath(import.meta.url)
-const __dirname = dirname(__filename)
+const currentFilePath = fileURLToPath(import.meta.url)
+const currentDirPath = dirname(currentFilePath)
 const logger = createLogger()
 
 //  Load GeoJSON files using readFileSync + JSON.parse (works correctly with ES Modules)
 const loadGeoJSON = (filePath) => {
   try {
-    return JSON.parse(readFileSync(join(__dirname, filePath), 'utf-8'))
+    return JSON.parse(readFileSync(join(currentDirPath, filePath), 'utf-8'))
   } catch (err) {
     logger.error(`Failed to load GeoJSON file: ${filePath} - ${err.message}`)
     return null
@@ -34,6 +34,16 @@ const regions = [
 ].filter((r) => r.boundary !== null) //  Skip any failed GeoJSON loads
 
 /**
+ * Returns true if the given point falls within any feature of the boundary.
+ * Supports both FeatureCollection and single Feature GeoJSON structures.
+ */
+function isPointInBoundary(pt, boundary) {
+  const features =
+    boundary.type === 'FeatureCollection' ? boundary.features : [boundary]
+  return features.some((feature) => booleanPointInPolygon(pt, feature))
+}
+
+/**
  * Finds the region (England, Wales, Scotland, Northern Ireland) for a given lat/long.
  * @param {number} lat - Latitude
  * @param {number} long - Longitude
@@ -42,21 +52,12 @@ const regions = [
 export function findRegion(lat, long) {
   try {
     const pt = point([long, lat]) // GeoJSON format: [longitude, latitude]
-
-    for (const region of regions) {
-      const boundary = region.boundary
-
-      // Support both FeatureCollection and Feature GeoJSON structures
-      const features =
-        boundary.type === 'FeatureCollection' ? boundary.features : [boundary]
-
-      for (const feature of features) {
-        if (booleanPointInPolygon(pt, feature)) {
-          return region.name
-        }
-      }
+    const matched = regions.find((region) =>
+      isPointInBoundary(pt, region.boundary)
+    )
+    if (matched) {
+      return matched.name
     }
-
     logger.warn(
       `Region not found for coordinates ${JSON.stringify({ lat, long })}`
     )

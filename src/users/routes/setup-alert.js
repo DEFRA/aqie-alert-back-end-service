@@ -17,7 +17,7 @@ const setupAlert = {
   path: '/setup-alert',
   options: {
     validate: {
-      payload: (value, options) => {
+      payload: (value) => {
         logger.info(
           `Validating setup-alert payload ${JSON.stringify({
             payload: {

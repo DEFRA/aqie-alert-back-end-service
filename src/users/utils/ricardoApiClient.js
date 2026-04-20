@@ -21,7 +21,7 @@ const MOCK_ALERTS_RESPONSE = {
       '@id': '/api/a_q_s_r_alerts/1187',
       '@type': 'AQSRAlert',
       id: 1187,
-      samplingPointId: 331,
+      samplingPointId: 3311,
       siteId: 'UKA00353',
       region: 'England',
       pollutant: 'O<sub>3</sub> (O3)',
@@ -84,7 +84,9 @@ export async function getAccessToken() {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email, password })
   }
-  if (dispatcher) fetchOptions.dispatcher = dispatcher
+  if (dispatcher) {
+    fetchOptions.dispatcher = dispatcher
+  }
 
   const response = await fetch(loginUrl, fetchOptions)
 
@@ -142,7 +144,9 @@ export async function fetchAlerts() {
       Authorization: `Bearer ${token}`
     }
   }
-  if (dispatcher) fetchOptions.dispatcher = dispatcher
+  if (dispatcher) {
+    fetchOptions.dispatcher = dispatcher
+  }
 
   const response = await fetch(alertsUrl, fetchOptions)
 

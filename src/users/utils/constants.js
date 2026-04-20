@@ -1,0 +1,9 @@
+export const MAGIC_NO_NINE = 9
+export const MAGIC_NO_FIVE = 5
+export const MAGIC_NO_DB_ERROR_CODE = 11000
+export const MAGIC_NO_201 = 201
+export const MINUS_FOUR = -4
+export const USER_NOT_FOUND_STATUS_CODE = 404
+export const STATUS_OK = 200
+export const INTERNAL_SERVER_ERROR = 500
+export const DB_ERROR_CODE = 11000
