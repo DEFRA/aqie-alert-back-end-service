@@ -2,6 +2,7 @@ import { schedule } from 'node-cron'
 import { config } from '../config.js'
 import { createLogger } from '../common/helpers/logging/logger.js'
 import { processForecastAlerts } from '../users/utils/forecastAlertProcessor.js'
+import { withLock } from '../common/helpers/mongo-lock.js'
 
 let cronJob
 
@@ -24,7 +25,12 @@ const forecastAlertScheduler = {
             'Forecast alert scheduler: running initial cycle on startup'
           )
           try {
-            await processForecastAlerts(server.db)
+            await withLock(
+              server.locker,
+              'forecast-alert-processing',
+              logger,
+              () => processForecastAlerts(server.db)
+            )
           } catch (err) {
             logger.error(`Forecast alert startup run error: ${err.message}`)
           }
@@ -34,7 +40,12 @@ const forecastAlertScheduler = {
             async () => {
               logger.info('MetOffice forecast alert cron job triggered')
               try {
-                await processForecastAlerts(server.db)
+                await withLock(
+                  server.locker,
+                  'forecast-alert-processing',
+                  logger,
+                  () => processForecastAlerts(server.db)
+                )
               } catch (err) {
                 logger.error(`Forecast alert cron job error: ${err.message}`)
                 throw err instanceof Error ? err : new Error(String(err))

@@ -52,6 +52,11 @@ describe('forecast-alert-scheduler', () => {
 
     server = {
       db: { collection: vi.fn() },
+      locker: {
+        lock: vi
+          .fn()
+          .mockResolvedValue({ free: vi.fn().mockResolvedValue(undefined) })
+      },
       events: {
         on: vi.fn((event, handler) => {
           eventHandlers[event] = handler

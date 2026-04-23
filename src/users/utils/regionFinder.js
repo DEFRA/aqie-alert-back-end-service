@@ -9,7 +9,6 @@ const currentFilePath = fileURLToPath(import.meta.url)
 const currentDirPath = dirname(currentFilePath)
 const logger = createLogger()
 
-//  Load GeoJSON files using readFileSync + JSON.parse (works correctly with ES Modules)
 const loadGeoJSON = (filePath) => {
   try {
     return JSON.parse(readFileSync(join(currentDirPath, filePath), 'utf-8'))
@@ -19,42 +18,41 @@ const loadGeoJSON = (filePath) => {
   }
 }
 
-const englandBoundary = loadGeoJSON('../../GeoBoundaries/england.geojson')
-const walesBoundary = loadGeoJSON('../../GeoBoundaries/wales.geojson')
-const scotlandBoundary = loadGeoJSON('../../GeoBoundaries/scotland.geojson')
-const northernIrelandBoundary = loadGeoJSON(
-  '../../GeoBoundaries/northern_ireland.geojson'
-)
-
-const regions = [
-  { name: 'England', boundary: englandBoundary },
-  { name: 'Wales', boundary: walesBoundary },
-  { name: 'Scotland', boundary: scotlandBoundary },
-  { name: 'Northern Ireland', boundary: northernIrelandBoundary }
-].filter((r) => r.boundary !== null) //  Skip any failed GeoJSON loads
-
-/**
- * Returns true if the given point falls within any feature of the boundary.
- * Supports both FeatureCollection and single Feature GeoJSON structures.
- */
-function isPointInBoundary(pt, boundary) {
-  const features =
-    boundary.type === 'FeatureCollection' ? boundary.features : [boundary]
-  return features.some((feature) => booleanPointInPolygon(pt, feature))
+function extractRegions(geoJson) {
+  if (!geoJson) {
+    return []
+  }
+  return geoJson.features.map((feature) => ({
+    name: feature.properties.ITL125NM ?? feature.properties.ITL225NM,
+    feature
+  }))
 }
 
+const england = loadGeoJSON('../../GeoBoundaries/England.GeoJSON')
+const northernIreland = loadGeoJSON(
+  '../../GeoBoundaries/NorthernIreland.GeoJSON'
+)
+const wales = loadGeoJSON('../../GeoBoundaries/Wales.GeoJSON')
+const scotland = loadGeoJSON('../../GeoBoundaries/Scotland.GeoJSON')
+
+const regions = [
+  ...extractRegions(england),
+  ...extractRegions(northernIreland),
+  ...extractRegions(wales),
+  ...extractRegions(scotland)
+]
+
 /**
- * Finds the region (England, Wales, Scotland, Northern Ireland) for a given lat/long.
+ * Returns the UK region name for a given lat/long.
+ * Checks against 18 ITL1/ITL2 regions across EnglandNI and ScotlandWales boundaries.
  * @param {number} lat - Latitude
  * @param {number} long - Longitude
  * @returns {string} - Region name or 'Unknown'
  */
 export function findRegion(lat, long) {
   try {
-    const pt = point([long, lat]) // GeoJSON format: [longitude, latitude]
-    const matched = regions.find((region) =>
-      isPointInBoundary(pt, region.boundary)
-    )
+    const pt = point([long, lat])
+    const matched = regions.find((r) => booleanPointInPolygon(pt, r.feature))
     if (matched) {
       return matched.name
     }

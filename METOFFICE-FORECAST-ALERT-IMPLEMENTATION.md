@@ -197,7 +197,7 @@ forecasts.some((f) => f.updated.startsWith('2026-04-02'))
 
 `addRegionsToForecasts()` iterates all ~5800 stations and calls `findRegion(lat, long)` from `regionFinder.js` for each one. The coordinates array in the API response is `[lat, long]`.
 
-`regionFinder.js` uses `@turf/boolean-point-in-polygon` against four pre-loaded GeoJSON boundary files (`england.geojson`, `wales.geojson`, `scotland.geojson`, `northern_ireland.geojson`) to determine which country the coordinates fall inside.
+`regionFinder.js` uses `@turf/boolean-point-in-polygon` against four pre-loaded GeoJSON boundary files (`England.GeoJSON`, `NorthernIreland.GeoJSON`, `Wales.GeoJSON`, `Scotland.GeoJSON`) covering 18 ITL regions to determine which region the coordinates fall inside.
 
 ```js
 // Before

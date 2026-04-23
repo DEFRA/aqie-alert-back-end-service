@@ -2,6 +2,7 @@ import { schedule } from 'node-cron'
 import { config } from '../config.js'
 import { createLogger } from '../common/helpers/logging/logger.js'
 import { processPollutantAlerts } from '../users/utils/pollutantAlertProcessor.js'
+import { withLock } from '../common/helpers/mongo-lock.js'
 
 let cronJob
 
@@ -23,7 +24,12 @@ const pollutantAlertScheduler = {
             'Pollutant alert scheduler: running initial cycle on startup'
           )
           try {
-            await processPollutantAlerts(server.db)
+            await withLock(
+              server.locker,
+              'pollutant-alert-processing',
+              logger,
+              () => processPollutantAlerts(server.db)
+            )
           } catch (err) {
             logger.error(`Pollutant alert startup run error: ${err.message}`)
           }
@@ -33,7 +39,12 @@ const pollutantAlertScheduler = {
             async () => {
               logger.info('Pollutant alert cron job triggered')
               try {
-                await processPollutantAlerts(server.db)
+                await withLock(
+                  server.locker,
+                  'pollutant-alert-processing',
+                  logger,
+                  () => processPollutantAlerts(server.db)
+                )
               } catch (err) {
                 logger.error(`Pollutant alert cron job error: ${err.message}`)
                 throw err instanceof Error ? err : new Error(String(err))

@@ -17,4 +17,17 @@ async function requireLock(locker, resource) {
   return lock
 }
 
-export { acquireLock, requireLock }
+async function withLock(locker, resource, logger, fn) {
+  const lock = await locker.lock(resource)
+  if (!lock) {
+    logger.info(`Skipping cycle — lock '${resource}' held by another instance`)
+    return
+  }
+  try {
+    await fn()
+  } finally {
+    await lock.free()
+  }
+}
+
+export { acquireLock, requireLock, withLock }

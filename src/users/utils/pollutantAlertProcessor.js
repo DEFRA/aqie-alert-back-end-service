@@ -11,12 +11,27 @@ function cleanPollutantName(pollutant) {
   return pollutant.replaceAll(/<[^>]{0,200}>/g, '')
 }
 
+function parseRegion(rawRegion) {
+  if (!rawRegion) {
+    return rawRegion
+  }
+  try {
+    const parsed = JSON.parse(rawRegion)
+    if (Array.isArray(parsed) && parsed.length > 0) {
+      return parsed[0]
+    }
+  } catch {
+    // not JSON-encoded, use as-is
+  }
+  return rawRegion
+}
+
 function filterValidAlerts(members) {
   return members
     .filter((item) => item.alertLevel === true && item.validationStatus === 2)
     .map((item) => ({
       'alert-id': item.samplingPointId,
-      region: item.region,
+      region: parseRegion(item.region),
       pollutant: item.pollutant,
       alertText: item.alertText,
       concentration: item.concentration,
