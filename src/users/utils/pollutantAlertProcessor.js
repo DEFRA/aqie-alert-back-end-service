@@ -1,5 +1,6 @@
 import { fetchAlerts } from './ricardoApiClient.js'
 import { sendNotification } from './notifyServiceClient.js'
+import { getRegionForSite } from './ricardoSiteAndRegionCache.js'
 import { config } from '../../config.js'
 import { createLogger } from '../../common/helpers/logging/logger.js'
 
@@ -28,9 +29,14 @@ function parseRegion(rawRegion) {
 
 function filterValidAlerts(members) {
   return members
-    .filter((item) => item.alertLevel === true && item.validationStatus === 2)
+    .filter(
+      (item) =>
+        item.validationStatus === 2 &&
+        (item.alertLevel === true || item.informationLevel === true)
+    )
     .map((item) => ({
       'alert-id': item.samplingPointId,
+      siteId: item.siteId,
       region: parseRegion(item.region),
       pollutant: item.pollutant,
       alertText: item.alertText,
@@ -207,45 +213,56 @@ async function sendAlertToUser(userMatch, alertDetail) {
 
 async function processAlertForUsers(db, alertDetail) {
   try {
-    await markAlertInProgress(db, alertDetail)
+    const lookedUpRegion = getRegionForSite(alertDetail.siteId)
+    if (!lookedUpRegion) {
+      logger.warn(
+        `[Pollutant] Alert ${alertDetail['alert-id']}: siteId "${alertDetail.siteId}" not found in site cache, falling back to parsed region "${alertDetail.region}"`
+      )
+    }
+    const resolvedDetail = {
+      ...alertDetail,
+      region: lookedUpRegion ?? alertDetail.region
+    }
+
+    await markAlertInProgress(db, resolvedDetail)
 
     const users = await db
       .collection('USERS')
-      .find({ 'locations.region': alertDetail.region })
+      .find({ 'locations.region': resolvedDetail.region })
       .toArray()
 
-    const matchedUsers = getMatchingUsers(users, alertDetail.region)
+    const matchedUsers = getMatchingUsers(users, resolvedDetail.region)
     logger.info(
-      `[Pollutant] Alert ${alertDetail['alert-id']}: matched ${matchedUsers.length} user-location pairs in region "${alertDetail.region}"`
+      `[Pollutant] Alert ${resolvedDetail['alert-id']}: matched ${matchedUsers.length} user-location pairs in region "${resolvedDetail.region}"`
     )
 
     let allSent = true
     for (const userMatch of matchedUsers) {
-      await insertPollutantAuditEntry(db, alertDetail, userMatch)
+      await insertPollutantAuditEntry(db, resolvedDetail, userMatch)
       try {
-        const notificationId = await sendAlertToUser(userMatch, alertDetail)
+        const notificationId = await sendAlertToUser(userMatch, resolvedDetail)
         await updatePollutantAuditEntry(
           db,
-          alertDetail['alert-id'],
+          resolvedDetail['alert-id'],
           userMatch.userContact,
           userMatch.location,
           notificationId
         )
         logger.info(
-          `[Pollutant] Notification sent for alert ${alertDetail['alert-id']} to ${userMatch.alertType} user, notificationId: ${notificationId}`
+          `[Pollutant] Notification sent for alert ${resolvedDetail['alert-id']} to ${userMatch.alertType} user, notificationId: ${notificationId}`
         )
       } catch (err) {
         allSent = false
         logger.error(
-          `[Pollutant] Failed to send notification for alert ${alertDetail['alert-id']} ${JSON.stringify({ alertType: userMatch.alertType, error: err.message })}`
+          `[Pollutant] Failed to send notification for alert ${resolvedDetail['alert-id']} ${JSON.stringify({ alertType: userMatch.alertType, error: err.message })}`
         )
       }
     }
 
     if (allSent) {
-      await markAlertProcessed(db, alertDetail['alert-id'])
+      await markAlertProcessed(db, resolvedDetail['alert-id'])
       logger.info(
-        `[Pollutant] Alert ${alertDetail['alert-id']} marked as processed`
+        `[Pollutant] Alert ${resolvedDetail['alert-id']} marked as processed`
       )
     }
   } catch (err) {

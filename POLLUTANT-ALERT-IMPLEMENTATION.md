@@ -20,6 +20,9 @@ This feature adds automated pollutant alert notifications to `aqie-alert-back-en
 │    │                                                                 │
 │    ├── ricardoApiClient.js ──► POST /api/login_check (token)         │
 │    │                          GET  /api/aqsr_alerts (alerts)         │
+│    │                          GET  /api/site_metadata (startup)      │
+│    │                                                                 │
+│    ├── ricardoSiteAndRegionCache.js ──► getRegionForSite(siteId)     │
 │    │                                                                 │
 │    ├── MongoDB: pollutant-alert-processing-state         (skip / mark in-progress)      │
 │    ├── MongoDB: USERS                 (find by region)               │
@@ -54,22 +57,31 @@ Handles all HTTP communication with the Ricardo API.
 - Throws on non-2xx response
 - Supports mock mode via `RICARDO_API_USE_MOCK=true` for local testing
 
+**`fetchSiteMetaData()`**
+
+- Calls `getAccessToken()` to get a fresh token
+- `GET` to `RICARDO_API_SITE_METADATA_URL` with `Authorization: Bearer <token>`
+- Returns `{ member: [{ siteId, latitude, longitude }, ...] }` — ~208 monitoring sites
+- Throws on non-2xx response
+- Supports mock mode — returns two hardcoded sites for local testing
+- Called at server startup (and every 24 hours) by `ricardoSiteAndRegionCache.js`
+
 ---
 
 ### 2. `src/users/utils/pollutantAlertProcessor.js`
 
 Core business logic. Exported functions:
 
-| Function                                  | Description                                                                                     |
-| ----------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| `processPollutantAlerts(db)`              | **Main entry point** — orchestrates the full cycle                                              |
-| `filterValidAlerts(members)`              | Filters raw API members to `alertLevel=true && validationStatus==2`, maps to alert-detail shape |
-| `getMatchingUsers(users, region)`         | Returns one entry per matching user-location pair for a given region                            |
-| `cleanPollutantName(pollutant)`           | Strips HTML tags from pollutant strings e.g. `O<sub>3</sub>` → `O3`                             |
-| `getAlreadyProcessedAlertIds(db)`         | Returns `Set<samplingPointId>` of alerts with status `in-progress` or `processed`               |
-| `markAlertInProgress(db, alertDetail)`    | Upserts alert into `pollutant-alert-processing-state` with `status: "in-progress"`              |
-| `markAlertProcessed(db, alertId)`         | Updates `pollutant-alert-processing-state` record to `status: "processed"`                      |
-| `sendAlertToUser(userMatch, alertDetail)` | Builds and dispatches the notification payload; returns `notificationId`                        |
+| Function                                  | Description                                                                                                        |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `processPollutantAlerts(db)`              | **Main entry point** — orchestrates the full cycle                                                                 |
+| `filterValidAlerts(members)`              | Filters raw API members to `alertLevel=true && validationStatus==2`, maps to alert-detail shape including `siteId` |
+| `getMatchingUsers(users, region)`         | Returns one entry per matching user-location pair for a given region                                               |
+| `cleanPollutantName(pollutant)`           | Strips HTML tags from pollutant strings e.g. `O<sub>3</sub>` → `O3`                                                |
+| `getAlreadyProcessedAlertIds(db)`         | Returns `Set<samplingPointId>` of alerts with status `in-progress` or `processed`                                  |
+| `markAlertInProgress(db, alertDetail)`    | Upserts alert into `pollutant-alert-processing-state` with `status: "in-progress"`                                 |
+| `markAlertProcessed(db, alertId)`         | Updates `pollutant-alert-processing-state` record to `status: "processed"`                                         |
+| `sendAlertToUser(userMatch, alertDetail)` | Builds and dispatches the notification payload; returns `notificationId`                                           |
 
 **`processPollutantAlerts` step-by-step:**
 
@@ -79,14 +91,15 @@ Core business logic. Exported functions:
 3. getAlreadyProcessedAlertIds()     — load IDs from pollutant-alert-processing-state collection
 4. Exclude already-seen IDs          — deduplicate across cron cycles
 5. For each new alert:
-   a. markAlertInProgress()          — upsert into pollutant-alert-processing-state
-   b. Query USERS where locations.region == alertRegion
-   c. getMatchingUsers()             — expand to one entry per matching location
-   d. For each user-location pair:
+   a. getRegionForSite(siteId)       — O(1) in-memory cache lookup; falls back to Ricardo's parsed region if siteId not in cache
+   b. markAlertInProgress()          — upsert into pollutant-alert-processing-state (uses resolved region)
+   c. Query USERS where locations.region == resolvedRegion
+   d. getMatchingUsers()             — expand to one entry per matching location
+   e. For each user-location pair:
       - insertPollutantAuditEntry()  — write audit record (not-processed)
       - sendAlertToUser()            — build payload, call notifyServiceClient
       - updatePollutantAuditEntry()  — mark audit record processed + notificationId
-   e. If ALL notifications succeeded → markAlertProcessed()
+   f. If ALL notifications succeeded → markAlertProcessed()
 ```
 
 ---
@@ -99,6 +112,118 @@ A Hapi plugin that owns the polling timer, using `node-cron` for scheduling.
 - **Runs `processPollutantAlerts` immediately on startup** — ensures no alerts are missed if the service restarts between cron ticks. Already-processed alerts are safely skipped via the `pollutant-alert-processing-state` collection check (`in-progress` / `processed`)
 - Schedules subsequent runs via `node-cron` using the cron expression from config (default: `*/30 * * * *` — every 30 minutes, clock-aligned at :00 and :30 of every hour)
 - Stops the cron job cleanly via `server.ext('onPostStop')` on server shutdown
+
+---
+
+### 4. `src/users/utils/ricardoSiteAndRegionCache.js`
+
+In-memory `Map<siteId, region>` populated at server startup. Provides O(1) synchronous region lookup per alert, eliminating any DB query per alert.
+
+| Export                     | Description                                                                                                                                                                                                  |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `initSiteCache()`          | Fetches all ~208 monitoring sites from `fetchSiteMetaData()`, resolves each site's region via `findRegion(lat, long)`, populates the module-level `Map`. Sets a 24-hour `setInterval` for automatic refresh. |
+| `stopSiteCache()`          | Cancels the refresh interval — called via `server.ext('onPreStop')` for clean pod shutdown.                                                                                                                  |
+| `getRegionForSite(siteId)` | Synchronous O(1) `Map.get()`. Returns the canonical region name or `null` if the site is not in the cache.                                                                                                   |
+
+If the API is unavailable during a refresh, the error is logged and existing map data is preserved — alerts continue to resolve against the last good cache state until the next successful refresh.
+
+---
+
+## Region Resolution & Site-Region Cache
+
+### Why Ricardo's region field is not used
+
+The Ricardo API includes a `region` field on each alert, but it is a JSON-encoded free-text string:
+
+```json
+"region": "[\"North West & Merseyside\"]"
+```
+
+This format is unreliable as a primary source — naming and encoding can vary across API versions, and any mismatch against the region names stored in the `USERS` collection would cause missed notifications.
+
+The primary resolution path therefore ignores this field entirely. Region is resolved via `siteId` → in-memory cache → GeoJSON polygon lookup. The raw string is only used as a fallback when the cache is empty, and `parseRegion()` correctly extracts the plain string from the JSON-encoded array. The GeoJSON `ITL125NM` property values have been aligned to match Ricardo's naming (e.g. `"North West & Merseyside"`, `"Yorkshire & Humberside"`), so even the fallback path resolves correctly.
+
+---
+
+### How the site-region cache works
+
+`src/users/utils/ricardoSiteAndRegionCache.js` holds a module-level `Map` that maps every monitoring site's `siteId` to its canonical region name:
+
+```
+siteId       region
+-----------  -------------------------
+UKA00170     North West & Merseyside
+UKA00339     Greater London
+UKA00353     South East
+...          ...                        (~208 sites total)
+```
+
+The map is populated at server startup by calling `fetchSiteMetaData()` — which returns lat/long for each site — then running each coordinate through `findRegion(lat, long)`, the same GeoJSON polygon lookup used when users subscribe. This guarantees that `USERS.locations.region` and `siteRegionMap` values are always consistent, regardless of how Ricardo labels regions in its API.
+
+---
+
+### Why `initSiteCache()` is an explicit function
+
+`ricardoSiteAndRegionCache.js` uses a different initialisation pattern to `regionFinder.js`:
+
+**`regionFinder.js`** reads local GeoJSON files via `readFileSync` — a synchronous call that is safe at module level. The `regions[]` array is fully populated before any other code runs, with no network dependency.
+
+**`ricardoSiteAndRegionCache.js`** must call `fetchSiteMetaData()` — an async network request to the Ricardo API. Running async calls at module level would crash the server if the API is unavailable at startup. Instead:
+
+- The `Map` starts **empty** — the module loads instantly
+- `initSiteCache()` is called explicitly via `server.ext('onPreStart')` in `server.js`
+- If the API call fails at startup, the error is caught and logged; the server still starts and the fallback path handles any alerts until the next restart
+
+---
+
+### Cache lifecycle
+
+**Startup:**
+
+```
+server.ext('onPreStart') → initSiteCache()
+  └── fetchSiteMetaData()       → ~208 sites: { siteId, latitude, longitude }
+  └── findRegion(lat, long)     → canonical region name from GeoJSON polygons
+  └── siteRegionMap.set(...)    → stored in module-level Map
+```
+
+Runs **once per process**. On a multi-pod deployment, each pod independently populates its own Map — no distributed locking required.
+
+**Per-alert lookup (every 30 minutes):**
+
+```
+getRegionForSite(siteId)   → O(1) synchronous Map.get()
+                           → returns region name, or null if not found
+```
+
+**24-hour TTL refresh:**
+
+`initSiteCache()` sets a `setInterval` for 24 hours after initial population. When it fires, `refreshCache()` re-fetches site metadata and repopulates the Map. Key design decisions:
+
+- The Map is **not cleared before re-fetching** — if the API is down at refresh time, the error is logged and the existing cache is preserved. Alerts continue to resolve against the last good state.
+- New `siteId` values added by Ricardo are picked up on the next refresh without a pod restart.
+
+**Shutdown:**
+
+```
+server.ext('onPreStop') → stopSiteCache()
+  └── clearInterval(refreshInterval)
+```
+
+Without this, the interval keeps the Node.js event loop alive and the pod hangs during shutdown instead of exiting cleanly.
+
+---
+
+### Fallback when cache is empty
+
+If `siteId` is not in the cache (API unavailable at startup, Map is empty), the processor falls back to parsing Ricardo's region string and logs a warning:
+
+```
+[Pollutant] Alert 3311: siteId "UKA00353" not found in site cache,
+falling back to parsed region "South East"
+```
+
+The Map is repopulated at the next 24-hour TTL refresh or pod restart.
 
 ---
 
@@ -146,7 +271,9 @@ db.collection('pollutant-alerts-audit').createIndex(
 
 ### `src/server.js`
 
-Imported and registered `pollutantAlertScheduler` and `forecastAlertScheduler` as Hapi plugins.
+- Imported and registered `pollutantAlertScheduler` and `forecastAlertScheduler` as Hapi plugins.
+- Calls `initSiteCache()` via `server.ext('onPreStart')` — populates the site-region map before the server starts accepting requests.
+- Calls `stopSiteCache()` via `server.ext('onPreStop')` — cancels the 24-hour refresh interval for clean pod shutdown.
 
 ---
 
@@ -324,7 +451,7 @@ All log statements in `pollutantAlertProcessor.js` are prefixed with `[Pollutant
 | `RICARDO_API_LOGIN_URL`      | `https://uk-air-api.staging.rcdo.co.uk/api/login_check` | No       |
 | `RICARDO_API_ALERTS_URL`     | `https://uk-air-api.staging.rcdo.co.uk/api/aqsr_alerts` | No       |
 | `POLLUTANT_CRON_SCHEDULE`    | `*/30 * * * *`                                          | No       |
-| `RICARDO_API_USE_MOCK`       | `true`                                                  | No       |
+| `RICARDO_API_USE_MOCK`       | `false`                                                 | No       |
 | `SMS_ALERT_TEMPLATE_ID`      | _(set in config)_                                       | Yes      |
 | `SMS_ALERT_CY_TEMPLATE_ID`   | _(set in config)_                                       | Yes      |
 | `EMAIL_ALERT_TEMPLATE_ID`    | _(set in config)_                                       | Yes      |
@@ -353,8 +480,9 @@ Scheduler       RicardoApiClient     MongoDB                   NotifyService
     │◄─────────────────────────────────│                           │
     │                  │                │                           │
     │  [for each new alert]             │                           │
+    │── getRegionForSite(siteId)        — in-memory O(1) lookup     │
     │── upsert pollutant-alert-processing-state (in-progress) ────────────────────────►│
-    │── query USERS by region ─────────►│                           │
+    │── query USERS by resolved region ─►│                           │
     │◄── matching users ────────────────│                           │
     │                  │                │                           │
     │  [for each user-location pair]    │                           │

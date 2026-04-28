@@ -11,6 +11,15 @@ describe('optOutEmailAlert route validation', () => {
     expect(validatePayload(payload)).toEqual(payload)
   })
 
+  it('should normalize email to lowercase and trim whitespace', () => {
+    expect(validatePayload({ emailAddress: 'User@Example.COM' })).toEqual({
+      emailAddress: 'user@example.com'
+    })
+    expect(validatePayload({ emailAddress: '  test@domain.co.uk  ' })).toEqual({
+      emailAddress: 'test@domain.co.uk'
+    })
+  })
+
   it('should throw BadRequest if emailAddress is missing', () => {
     expect(() => validatePayload({})).toThrow(
       Boom.badRequest('emailAddress is required')
@@ -23,16 +32,16 @@ describe('optOutEmailAlert route validation', () => {
     )
   })
 
-  it('should throw Forbidden if emailAddress is invalid format', () => {
+  it('should throw BadRequest if emailAddress is invalid format', () => {
     expect(() => validatePayload({ emailAddress: 'invalid-email' })).toThrow(
-      Boom.forbidden(INVALID_EMAIL_FORMAT)
+      Boom.badRequest(INVALID_EMAIL_FORMAT)
     )
     // GDS-aligned regex: foo@bar (no dot in domain) is considered valid
     expect(() => validatePayload({ emailAddress: 'foo@bar.' })).toThrow(
-      Boom.forbidden(INVALID_EMAIL_FORMAT)
+      Boom.badRequest(INVALID_EMAIL_FORMAT)
     )
     expect(() => validatePayload({ emailAddress: 'foo@.com' })).toThrow(
-      Boom.forbidden(INVALID_EMAIL_FORMAT)
+      Boom.badRequest(INVALID_EMAIL_FORMAT)
     )
   })
 })

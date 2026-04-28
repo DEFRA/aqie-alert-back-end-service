@@ -48,6 +48,10 @@ vi.mock('./maskingUtils.js', () => ({
   maskTemplateId: vi.fn((v) => v)
 }))
 
+vi.mock('./ricardoSiteAndRegionCache.js', () => ({
+  getRegionForSite: vi.fn().mockReturnValue(null)
+}))
+
 describe('pollutantAlertProcessor', () => {
   describe('cleanPollutantName', () => {
     it('should strip HTML tags from pollutant name', () => {
@@ -64,6 +68,7 @@ describe('pollutantAlertProcessor', () => {
       const members = [
         {
           samplingPointId: 331,
+          siteId: 'UKA00339',
           region: 'Greater London',
           pollutant: 'O<sub>3</sub>',
           alertText: 'tbc',
@@ -74,6 +79,7 @@ describe('pollutantAlertProcessor', () => {
         },
         {
           samplingPointId: 100,
+          siteId: 'UKA00100',
           region: 'South East',
           pollutant: 'NO2',
           alertText: 'tbc',
@@ -84,7 +90,8 @@ describe('pollutantAlertProcessor', () => {
         },
         {
           samplingPointId: 200,
-          region: 'North West',
+          siteId: 'UKA00200',
+          region: 'North West & Merseyside',
           pollutant: 'PM10',
           alertText: 'tbc',
           concentration: 80,
@@ -99,6 +106,7 @@ describe('pollutantAlertProcessor', () => {
       expect(result).toHaveLength(1)
       expect(result[0]).toEqual({
         'alert-id': 331,
+        siteId: 'UKA00339',
         region: 'Greater London',
         pollutant: 'O<sub>3</sub>',
         alertText: 'tbc',
@@ -118,6 +126,44 @@ describe('pollutantAlertProcessor', () => {
           alertText: '',
           concentration: 0,
           alertThreshold: null
+        }
+      ]
+      expect(filterValidAlerts(members)).toHaveLength(0)
+    })
+
+    it('should include alert when alertLevel=false but informationLevel=true', () => {
+      const members = [
+        {
+          samplingPointId: 500,
+          siteId: 'UKA00500',
+          region: 'South East',
+          pollutant: 'NO2',
+          alertText: '',
+          concentration: 50,
+          alertThreshold: null,
+          alertLevel: false,
+          informationLevel: true,
+          validationStatus: 2
+        }
+      ]
+      const result = filterValidAlerts(members)
+      expect(result).toHaveLength(1)
+      expect(result[0]['alert-id']).toBe(500)
+    })
+
+    it('should exclude alert when both alertLevel and informationLevel are false', () => {
+      const members = [
+        {
+          samplingPointId: 501,
+          siteId: 'UKA00501',
+          region: 'South East',
+          pollutant: 'NO2',
+          alertText: '',
+          concentration: 50,
+          alertThreshold: null,
+          alertLevel: false,
+          informationLevel: false,
+          validationStatus: 2
         }
       ]
       expect(filterValidAlerts(members)).toHaveLength(0)

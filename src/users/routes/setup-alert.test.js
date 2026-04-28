@@ -21,7 +21,8 @@ vi.mock('../utils/maskingUtils.js', () => ({
 }))
 
 vi.mock('../utils/validationUtils.js', () => ({
-  validateContactInfo: vi.fn()
+  validateContactInfo: vi.fn(),
+  normalizeEmail: vi.fn((email) => (email ? email.trim().toLowerCase() : email))
 }))
 
 describe('setup-alert route', () => {
@@ -236,6 +237,31 @@ describe('setup-alert route', () => {
           'test@example.com'
         )
         expect(result).toEqual(payload)
+      })
+
+      it('should normalize email to lowercase and trim before validation', async () => {
+        const { validateContactInfo, normalizeEmail } = await import(
+          '../utils/validationUtils.js'
+        )
+        validateContactInfo.mockReturnValue({ isValid: true })
+
+        const payload = {
+          alertType: 'email',
+          emailAddress: '  User@Example.COM  ',
+          location: 'London',
+          lat: 51.5074,
+          long: -0.1278,
+          lang: 'en'
+        }
+
+        const result = validatePayload(payload, mockOptions)
+        expect(normalizeEmail).toHaveBeenCalledWith('  User@Example.COM  ')
+        expect(validateContactInfo).toHaveBeenCalledWith(
+          'email',
+          undefined,
+          'user@example.com'
+        )
+        expect(result).toEqual({ ...payload, emailAddress: 'user@example.com' })
       })
 
       it('should reject invalid contact info', async () => {

@@ -8,6 +8,15 @@ const isProduction = process.env.NODE_ENV === 'production'
 
 // ---------------------------------------------------------------------------
 // Mock data — used when RICARDO_API_USE_MOCK=true
+// Mock site metadata — two sites covering different regions for local testing
+const MOCK_SITE_METADATA_RESPONSE = {
+  member: [
+    { siteId: 'UKA00170', latitude: '53.460080', longitude: '-2.472056' },
+    { siteId: 'UKA00339', latitude: '51.5074', longitude: '-0.1278' }
+  ]
+}
+
+// ---------------------------------------------------------------------------
 // Update the "region" values below to match regions registered in your USERS
 // collection so the full flow (region matching → notify) can be exercised.
 // ---------------------------------------------------------------------------
@@ -162,5 +171,50 @@ export async function fetchAlerts() {
 
   const data = await response.json()
   logger.info(`Fetched ${data.totalItems} alerts from Ricardo API`)
+  return data
+}
+
+export async function fetchSiteMetaData() {
+  if (config.get('ricardoApi.useMock')) {
+    logger.info(
+      `[MOCK] Returning mock site metadata (${MOCK_SITE_METADATA_RESPONSE.member.length} sites)`
+    )
+    return MOCK_SITE_METADATA_RESPONSE
+  }
+
+  const token = await getAccessToken()
+  const siteMetaDataUrl = config.get('ricardoApi.siteMetaDataUrl')
+
+  logger.info(
+    `Fetching site metadata from Ricardo API ${JSON.stringify({ url: siteMetaDataUrl })}`
+  )
+
+  const dispatcher = getRicardoDispatcher()
+  const fetchOptions = {
+    method: 'GET',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'application/ld+json',
+      Authorization: `Bearer ${token}`
+    }
+  }
+  if (dispatcher) {
+    fetchOptions.dispatcher = dispatcher
+  }
+
+  const response = await fetch(siteMetaDataUrl, fetchOptions)
+
+  if (!response.ok) {
+    const errorText = await response.text()
+    logger.error(
+      `Ricardo API site metadata fetch failed ${JSON.stringify({ status: response.status, errorText })}`
+    )
+    throw new Error(
+      `Ricardo API site metadata fetch failed: ${response.status} - ${errorText}`
+    )
+  }
+
+  const data = await response.json()
+  logger.info(`Fetched ${data.totalItems} sites from Ricardo API`)
   return data
 }

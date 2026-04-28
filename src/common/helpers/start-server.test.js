@@ -1,10 +1,7 @@
 import { describe, test, expect, vi } from 'vitest'
 
-import hapi from '@hapi/hapi'
-
 describe('#startServer', () => {
   let createServerSpy
-  let hapiServerSpy
   let startServerImport
   let createServerImport
 
@@ -14,7 +11,6 @@ describe('#startServer', () => {
     startServerImport = await import('./start-server.js')
 
     createServerSpy = vi.spyOn(createServerImport, 'createServer')
-    hapiServerSpy = vi.spyOn(hapi, 'server')
   })
 
   afterAll(() => {
@@ -23,10 +19,16 @@ describe('#startServer', () => {
 
   describe('When server starts', () => {
     test('Should start up server as expected', async () => {
+      const mockServer = {
+        start: vi.fn().mockResolvedValue(undefined),
+        logger: { info: vi.fn() }
+      }
+      createServerSpy.mockResolvedValue(mockServer)
+
       await startServerImport.startServer()
 
       expect(createServerSpy).toHaveBeenCalled()
-      expect(hapiServerSpy).toHaveBeenCalled()
+      expect(mockServer.start).toHaveBeenCalled()
     })
   })
 

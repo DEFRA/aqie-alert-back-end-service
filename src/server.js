@@ -12,6 +12,10 @@ import { requestTracing } from './common/helpers/request-tracing.js'
 import { setupProxy } from './common/helpers/proxy/setup-proxy.js'
 import { pollutantAlertScheduler } from './plugins/pollutant-alert-scheduler.js'
 import { forecastAlertScheduler } from './plugins/forecast-alert-scheduler.js'
+import {
+  initSiteCache,
+  stopSiteCache
+} from './users/utils/ricardoSiteAndRegionCache.js'
 
 async function createServer() {
   setupProxy()
@@ -61,6 +65,14 @@ async function createServer() {
     pollutantAlertScheduler,
     forecastAlertScheduler
   ])
+
+  server.ext('onPreStart', async () => {
+    await initSiteCache()
+  })
+
+  server.ext('onPreStop', () => {
+    stopSiteCache()
+  })
 
   return server
 }

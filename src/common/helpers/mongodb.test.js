@@ -1,10 +1,20 @@
 import { describe, test, expect, vi } from 'vitest'
+import { setup, teardown } from 'vitest-mongodb'
 
 import { Db, MongoClient } from 'mongodb'
 import { LockManager } from 'mongo-locks'
 
 describe('#mongoDb', () => {
   let server
+
+  beforeAll(async () => {
+    await setup()
+    process.env.MONGO_URI = globalThis.__MONGO_URI__
+  })
+
+  afterAll(async () => {
+    await teardown()
+  })
 
   describe('Set up', () => {
     beforeAll(async () => {

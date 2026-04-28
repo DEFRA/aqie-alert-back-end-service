@@ -3,7 +3,8 @@ import {
   isValidEmail,
   isValidPhoneNumber,
   validateContactInfo,
-  normalizePhoneNumber
+  normalizePhoneNumber,
+  normalizeEmail
 } from './validationUtils.js'
 
 const INVALID_PHONE_ERROR =
@@ -59,6 +60,21 @@ describe('normalizePhoneNumber', () => {
   it('should normalize UK mobile numbers to +44 international format', () => {
     expect(normalizePhoneNumber('07896543210')).toBe('+447896543210')
     expect(normalizePhoneNumber('+447896543210')).toBe('+447896543210')
+  })
+})
+
+describe('normalizeEmail', () => {
+  it('should lowercase and trim a valid email', () => {
+    expect(normalizeEmail('User@Example.COM')).toBe('user@example.com')
+    expect(normalizeEmail('  test@domain.co.uk  ')).toBe('test@domain.co.uk')
+    expect(normalizeEmail('TEST+TAG@EXAMPLE.ORG')).toBe('test+tag@example.org')
+  })
+
+  it('should return null for invalid inputs', () => {
+    expect(normalizeEmail(null)).toBeNull()
+    expect(normalizeEmail(undefined)).toBeNull()
+    expect(normalizeEmail('')).toBeNull()
+    expect(normalizeEmail(123)).toBeNull()
   })
 })
 

@@ -31,6 +31,18 @@ export function normalizePhoneNumber(phoneNumber) {
 }
 
 /**
+ * Normalizes email address: trims whitespace and converts to lowercase
+ * @param {string} email - Email address to normalize
+ * @returns {string|null} - Normalized email or null if invalid input
+ */
+export function normalizeEmail(email) {
+  if (!email || typeof email !== 'string') {
+    return null
+  }
+  return email.trim().toLowerCase()
+}
+
+/**
  * Validates email address format
  * @param {string} email - Email address to validate
  * @returns {boolean} - True if valid email format
@@ -42,7 +54,7 @@ export function isValidEmail(email) {
 
   // GDS-aligned email regex — bounded quantifiers prevent super-linear backtracking (S5852); lookahead/behind reject leading/trailing dots in domain
   const emailRegex = /^[^\s@]{1,256}@(?!\.)[^\s@]{1,256}(?<!\.)$/
-  return emailRegex.test(email.trim())
+  return emailRegex.test(normalizeEmail(email))
 }
 
 /**

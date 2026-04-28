@@ -120,7 +120,8 @@ db.collection('forecast-schedule-state').createIndex(
 
 ### `src/server.js`
 
-Imported and registered `forecastAlertScheduler` as a Hapi plugin alongside `pollutantAlertScheduler`.
+- Imported and registered `forecastAlertScheduler` as a Hapi plugin alongside `pollutantAlertScheduler`.
+- Also registers `initSiteCache()` via `server.ext('onPreStart')` and `stopSiteCache()` via `server.ext('onPreStop')` for the pollutant alert site-region cache (not used by the forecast flow, but part of the same server lifecycle).
 
 ---
 
@@ -197,7 +198,9 @@ forecasts.some((f) => f.updated.startsWith('2026-04-02'))
 
 `addRegionsToForecasts()` iterates all ~5800 stations and calls `findRegion(lat, long)` from `regionFinder.js` for each one. The coordinates array in the API response is `[lat, long]`.
 
-`regionFinder.js` uses `@turf/boolean-point-in-polygon` against four pre-loaded GeoJSON boundary files (`England.GeoJSON`, `NorthernIreland.GeoJSON`, `Wales.GeoJSON`, `Scotland.GeoJSON`) covering 18 ITL regions to determine which region the coordinates fall inside.
+`regionFinder.js` uses `@turf/boolean-point-in-polygon` against four GeoJSON boundary files (`England.GeoJSON`, `NorthernIreland.GeoJSON`, `Wales.GeoJSON`, `Scotland.GeoJSON`) covering 18 ITL regions. These files are loaded once at module level using `readFileSync` — the `regions[]` array is fully populated before the server accepts requests, so every `findRegion()` call reads from memory with no disk I/O.
+
+> **Note:** `findRegion()` is shared between both alert schedulers. The forecast flow calls it here (per monitoring station, at alert-processing time). The pollutant flow calls it at startup via `initSiteCache()` to pre-build a `siteId → region` Map, then uses that Map for O(1) lookups during alert processing. See [POLLUTANT-ALERT-IMPLEMENTATION.md](./POLLUTANT-ALERT-IMPLEMENTATION.md#region-resolution--site-region-cache) for the full explanation of why the two schedulers use different loading strategies.
 
 ```js
 // Before

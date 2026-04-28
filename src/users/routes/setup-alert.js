@@ -2,7 +2,10 @@ import Boom from '@hapi/boom'
 import { setupAlertHandler } from '../controllers/setupAlertController.js'
 import { createLogger } from '../../common/helpers/logging/logger.js'
 import { maskPhoneNumber, maskEmail } from '../utils/maskingUtils.js'
-import { validateContactInfo } from '../utils/validationUtils.js'
+import {
+  validateContactInfo,
+  normalizeEmail
+} from '../utils/validationUtils.js'
 
 const logger = createLogger()
 
@@ -37,6 +40,10 @@ const setupAlert = {
           lang
         } = value
 
+        const normalizedEmail = emailAddress
+          ? normalizeEmail(emailAddress)
+          : emailAddress
+
         if (!lang || !['en', 'cy'].includes(lang)) {
           logger.warn(`Invalid lang provided ${JSON.stringify({ lang })}`)
           throw Boom.badRequest('lang must be en or cy')
@@ -53,7 +60,7 @@ const setupAlert = {
         const contactValidation = validateContactInfo(
           alertType,
           phoneNumber,
-          emailAddress
+          normalizedEmail
         )
         if (!contactValidation.isValid) {
           logger.warn(
@@ -70,7 +77,7 @@ const setupAlert = {
         }
 
         logger.info('Payload validation successful')
-        return value
+        return { ...value, emailAddress: normalizedEmail }
       }
     }
   },

@@ -190,8 +190,14 @@ const config = convict({
     useMock: {
       doc: 'Use mock Ricardo API response instead of making real HTTP calls (for local testing)',
       format: Boolean,
-      default: true,
+      default: false,
       env: 'RICARDO_API_USE_MOCK'
+    },
+    siteMetaDataUrl: {
+      doc: 'Ricardo API site metadata endpoint (used to map siteId → region)',
+      format: String,
+      default: 'https://uk-air-api.staging.rcdo.co.uk/api/site_meta_datas',
+      env: 'RICARDO_API_SITE_METADATA_URL'
     }
   },
   alertTemplates: {

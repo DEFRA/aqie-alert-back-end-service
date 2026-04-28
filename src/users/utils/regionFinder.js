@@ -35,6 +35,7 @@ const northernIreland = loadGeoJSON(
 const wales = loadGeoJSON('../../GeoBoundaries/Wales.GeoJSON')
 const scotland = loadGeoJSON('../../GeoBoundaries/Scotland.GeoJSON')
 
+// module-level variable, loaded once
 const regions = [
   ...extractRegions(england),
   ...extractRegions(northernIreland),
@@ -43,6 +44,8 @@ const regions = [
 ]
 
 /**
+ *
+ * reads from the already-in-memory `regions` array
  * Returns the UK region name for a given lat/long.
  * Checks against 18 ITL1/ITL2 regions across EnglandNI and ScotlandWales boundaries.
  * @param {number} lat - Latitude

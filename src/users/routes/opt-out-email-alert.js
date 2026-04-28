@@ -2,7 +2,7 @@ import Boom from '@hapi/boom'
 import { optOutEmailAlertHandler } from '../controllers/optOutEmailAlertController.js'
 import { createLogger } from '../../common/helpers/logging/logger.js'
 import { maskEmail } from '../utils/maskingUtils.js'
-import { isValidEmail } from '../utils/validationUtils.js'
+import { isValidEmail, normalizeEmail } from '../utils/validationUtils.js'
 
 const logger = createLogger()
 
@@ -25,15 +25,17 @@ const optOutEmailAlert = {
           throw Boom.badRequest('emailAddress is required')
         }
 
-        if (!isValidEmail(emailAddress)) {
+        const normalizedEmail = normalizeEmail(emailAddress)
+
+        if (!isValidEmail(normalizedEmail)) {
           logger.warn(
-            `Invalid email format ${JSON.stringify({ emailAddress: maskEmail(emailAddress) })}`
+            `Invalid email format ${JSON.stringify({ emailAddress: maskEmail(normalizedEmail) })}`
           )
-          throw Boom.forbidden('Invalid email format')
+          throw Boom.badRequest('Invalid email format')
         }
 
         logger.info('Payload validation successful')
-        return value
+        return { ...value, emailAddress: normalizedEmail }
       }
     }
   },
