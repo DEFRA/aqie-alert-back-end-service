@@ -3,6 +3,7 @@ import {
   filterValidAlerts,
   getMatchingUsers,
   cleanPollutantName,
+  formatPollutantName,
   formatLocationForUrl,
   sendAlertToUser,
   processPollutantAlerts
@@ -60,6 +61,32 @@ describe('pollutantAlertProcessor', () => {
 
     it('should return plain text unchanged', () => {
       expect(cleanPollutantName('PM2.5')).toBe('PM2.5')
+    })
+  })
+
+  describe('formatPollutantName', () => {
+    it('should map O3 code to ozone', () => {
+      expect(formatPollutantName('O<sub>3</sub> (O3)')).toBe('ozone (O3)')
+    })
+
+    it('should map NO2 code to nitrogen dioxide', () => {
+      expect(formatPollutantName('NO<sub>2</sub> (NO2)')).toBe(
+        'nitrogen dioxide (NO2)'
+      )
+    })
+
+    it('should map SO2 code to sulphur dioxide', () => {
+      expect(formatPollutantName('SO<sub>2</sub> (SO2)')).toBe(
+        'sulphur dioxide (SO2)'
+      )
+    })
+
+    it('should return cleaned string unchanged when code is not in the map', () => {
+      expect(formatPollutantName('XYZ (UNKNOWN)')).toBe('XYZ (UNKNOWN)')
+    })
+
+    it('should return cleaned string unchanged when there are no parentheses', () => {
+      expect(formatPollutantName('PM2.5')).toBe('PM2.5')
     })
   })
 
@@ -487,7 +514,7 @@ describe('pollutantAlertProcessor', () => {
           personalisation: {
             location: 'Bristol, City of Bristol',
             concentration: '180',
-            Pollutant: 'O3 (O3)',
+            Pollutant: 'ozone (O3)',
             checkAirQualityLink:
               'https://check-air-quality.service.gov.uk/location/bristol_city-of-bristol?lang=en'
           }

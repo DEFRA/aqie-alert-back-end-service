@@ -1,19 +1,25 @@
 import { describe, test, expect, vi } from 'vitest'
-import { setup, teardown } from 'vitest-mongodb'
+import { MongoMemoryServer } from 'mongodb-memory-server'
 
 import { Db, MongoClient } from 'mongodb'
 import { LockManager } from 'mongo-locks'
 
+const MONGO_STARTUP_TIMEOUT_MS = 60_000
+const MONGO_HOOK_TIMEOUT_MS = 2 * MONGO_STARTUP_TIMEOUT_MS
+
 describe('#mongoDb', () => {
   let server
+  let mongod
 
   beforeAll(async () => {
-    await setup()
-    process.env.MONGO_URI = globalThis.__MONGO_URI__
-  })
+    mongod = await MongoMemoryServer.create({
+      instance: { startupTimeoutMS: MONGO_STARTUP_TIMEOUT_MS }
+    })
+    process.env.MONGO_URI = mongod.getUri()
+  }, MONGO_HOOK_TIMEOUT_MS)
 
   afterAll(async () => {
-    await teardown()
+    await mongod?.stop()
   })
 
   describe('Set up', () => {

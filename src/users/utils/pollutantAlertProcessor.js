@@ -12,6 +12,30 @@ function cleanPollutantName(pollutant) {
   return pollutant.replaceAll(/<[^>]{0,200}>/g, '')
 }
 
+const POLLUTANT_NAME_MAP = {
+  O3: 'ozone',
+  NO2: 'nitrogen dioxide',
+  SO2: 'sulphur dioxide',
+  CO: 'carbon monoxide',
+  PM10: 'PM10',
+  'PM2.5': 'PM2.5',
+  NO: 'nitrogen monoxide',
+  C6H6: 'benzene',
+  Pb: 'lead',
+  '1,3-BD': '1,3-butadiene'
+}
+
+function formatPollutantName(pollutant) {
+  const cleaned = cleanPollutantName(pollutant)
+  const match = cleaned.match(/\(([^)]{1,20})\)/)
+  if (!match) {
+    return cleaned
+  }
+  const code = match[1]
+  const name = POLLUTANT_NAME_MAP[code]
+  return name ? `${name} (${code})` : cleaned
+}
+
 function parseRegion(rawRegion) {
   if (!rawRegion) {
     return rawRegion
@@ -189,7 +213,7 @@ async function sendAlertToUser(userMatch, alertDetail) {
     personalisation: {
       location: userMatch.location,
       concentration: String(alertDetail.concentration),
-      Pollutant: cleanPollutantName(alertDetail.pollutant),
+      Pollutant: formatPollutantName(alertDetail.pollutant),
       checkAirQualityLink
     }
   }
@@ -327,6 +351,7 @@ export {
   filterValidAlerts,
   getMatchingUsers,
   cleanPollutantName,
+  formatPollutantName,
   formatLocationForUrl,
   getAlreadyProcessedAlertIds,
   markAlertInProgress,

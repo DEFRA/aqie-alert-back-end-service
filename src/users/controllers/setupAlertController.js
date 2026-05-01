@@ -246,6 +246,80 @@ function validateDbAndPrepare(db, context) {
   }
 }
 
+async function buildAndSendNotification(
+  alertType,
+  phoneNumber,
+  emailAddress,
+  location,
+  requestId
+) {
+  const notifyPayload = buildNotifyPayload(
+    alertType,
+    phoneNumber,
+    emailAddress,
+    location
+  )
+  logger.info(
+    `Prepared notification payload for validation ${JSON.stringify({
+      requestId,
+      notifyPayload: {
+        ...notifyPayload,
+        phoneNumber: maskPhoneNumber(phoneNumber),
+        emailAddress: maskEmail(emailAddress),
+        templateId: maskTemplateId(notifyPayload.templateId)
+      }
+    })}`
+  )
+  return dispatchSetupNotification(
+    notifyPayload,
+    requestId,
+    phoneNumber,
+    emailAddress
+  )
+}
+
+async function persistAndBuildResponse(
+  db,
+  prepared,
+  alertType,
+  requestId,
+  startTime,
+  duplicateCheckDuration,
+  h
+) {
+  const { userIdentifier, userContact, preferredLang, locationData } = prepared
+  const { result, dbSaveDuration } = await saveUserLocation(
+    db,
+    userIdentifier,
+    userContact,
+    alertType,
+    preferredLang,
+    locationData,
+    requestId
+  )
+
+  if (!result) {
+    logger.error(
+      `Database operation failed - no result returned ${JSON.stringify({ requestId })}`
+    )
+    return Boom.internal('Failed to process user data')
+  }
+
+  const totalDuration = Date.now() - startTime
+  const response = { message: 'Alert setup successful', userId: result._id }
+  logger.info(
+    `Setup alert handler completed successfully ${JSON.stringify({
+      requestId,
+      userId: result._id,
+      totalDuration,
+      duplicateCheckDuration,
+      dbSaveDuration,
+      response
+    })}`
+  )
+  return h.response(response).code(MAGIC_NO_201)
+}
+
 async function runAlertPipeline(db, context, prepared, startTime, h) {
   const {
     requestId,
@@ -256,19 +330,13 @@ async function runAlertPipeline(db, context, prepared, startTime, h) {
     lat,
     long
   } = context
-  const {
-    normalizedLocation,
-    locationData,
-    preferredLang,
-    userContact,
-    userIdentifier
-  } = prepared
+  const { normalizedLocation, locationData } = prepared
 
   try {
     const dbStartTime = Date.now()
     const duplicateError = await validateDuplicateAndLimit(
       db,
-      userIdentifier,
+      prepared.userIdentifier,
       location,
       normalizedLocation,
       lat,
@@ -283,64 +351,26 @@ async function runAlertPipeline(db, context, prepared, startTime, h) {
       `Duplicate location check completed - proceeding with notification ${JSON.stringify({ requestId, duplicateCheckDuration })}`
     )
 
-    const notifyPayload = buildNotifyPayload(
+    const notifyError = await buildAndSendNotification(
       alertType,
       phoneNumber,
       emailAddress,
-      location
-    )
-    logger.info(
-      `Prepared notification payload for validation ${JSON.stringify({
-        requestId,
-        notifyPayload: {
-          ...notifyPayload,
-          phoneNumber: maskPhoneNumber(phoneNumber),
-          emailAddress: maskEmail(emailAddress),
-          templateId: maskTemplateId(notifyPayload.templateId)
-        }
-      })}`
-    )
-
-    const notifyError = await dispatchSetupNotification(
-      notifyPayload,
-      requestId,
-      phoneNumber,
-      emailAddress
+      location,
+      requestId
     )
     if (notifyError) {
       return notifyError
     }
 
-    const { result, dbSaveDuration } = await saveUserLocation(
+    return await persistAndBuildResponse(
       db,
-      userIdentifier,
-      userContact,
+      prepared,
       alertType,
-      preferredLang,
-      locationData,
-      requestId
+      requestId,
+      startTime,
+      duplicateCheckDuration,
+      h
     )
-
-    if (!result) {
-      logger.error(
-        `Database operation failed - no result returned ${JSON.stringify({ requestId })}`
-      )
-      return Boom.internal('Failed to process user data')
-    }
-
-    const totalDuration = Date.now() - startTime
-    const response = { message: 'Alert setup successful', userId: result._id }
-    logger.info(
-      `Setup alert handler completed successfully ${JSON.stringify({
-        requestId,
-        userId: result._id,
-        totalDuration,
-        duplicateCheckDuration,
-        dbSaveDuration,
-        response
-      })}`
-    )
-    return h.response(response).code(MAGIC_NO_201)
   } catch (err) {
     const totalDuration = Date.now() - startTime
     logger.error(
