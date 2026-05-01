@@ -4,8 +4,8 @@ import { MongoMemoryServer } from 'mongodb-memory-server'
 import { Db, MongoClient } from 'mongodb'
 import { LockManager } from 'mongo-locks'
 
-const MONGO_STARTUP_TIMEOUT_MS = 60_000
-const MONGO_HOOK_TIMEOUT_MS = 2 * MONGO_STARTUP_TIMEOUT_MS
+const MONGO_LAUNCH_TIMEOUT_MS = 60_000
+const MONGO_HOOK_TIMEOUT_MS = 2 * MONGO_LAUNCH_TIMEOUT_MS
 
 describe('#mongoDb', () => {
   let server
@@ -13,7 +13,7 @@ describe('#mongoDb', () => {
 
   beforeAll(async () => {
     mongod = await MongoMemoryServer.create({
-      instance: { startupTimeoutMS: MONGO_STARTUP_TIMEOUT_MS }
+      instance: { launchTimeout: MONGO_LAUNCH_TIMEOUT_MS }
     })
     process.env.MONGO_URI = mongod.getUri()
   }, MONGO_HOOK_TIMEOUT_MS)

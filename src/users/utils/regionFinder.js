@@ -28,12 +28,12 @@ function extractRegions(geoJson) {
   }))
 }
 
-const england = loadGeoJSON('../../GeoBoundaries/England.GeoJSON')
+const england = loadGeoJSON('../../GeoBoundaries/england.geojson')
 const northernIreland = loadGeoJSON(
-  '../../GeoBoundaries/NorthernIreland.GeoJSON'
+  '../../GeoBoundaries/northernireland.geojson'
 )
-const wales = loadGeoJSON('../../GeoBoundaries/Wales.GeoJSON')
-const scotland = loadGeoJSON('../../GeoBoundaries/Scotland.GeoJSON')
+const wales = loadGeoJSON('../../GeoBoundaries/wales.geojson')
+const scotland = loadGeoJSON('../../GeoBoundaries/scotland.geojson')
 
 // module-level variable, loaded once
 const regions = [
