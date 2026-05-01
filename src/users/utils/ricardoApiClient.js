@@ -7,18 +7,9 @@ const logger = createLogger()
 const isProduction = process.env.NODE_ENV === 'production'
 
 // ---------------------------------------------------------------------------
-// Mock data — used when RICARDO_API_USE_MOCK=true
-// Mock site metadata — two sites covering different regions for local testing
-const MOCK_SITE_METADATA_RESPONSE = {
-  member: [
-    { siteId: 'UKA00170', latitude: '53.460080', longitude: '-2.472056' },
-    { siteId: 'UKA00339', latitude: '51.5074', longitude: '-0.1278' }
-  ]
-}
-
-// ---------------------------------------------------------------------------
-// Update the "region" values below to match regions registered in your USERS
-// collection so the full flow (region matching → notify) can be exercised.
+// Mock alert data — used when RICARDO_API_USE_MOCK=true.
+// Only fetchAlerts is mocked. getAccessToken and fetchSiteMetaData always call
+// the real Ricardo API so the site-region cache is populated with live data.
 // ---------------------------------------------------------------------------
 const MOCK_ALERTS_RESPONSE = {
   '@context': '/api/contexts/AQSRAlert',
@@ -76,11 +67,6 @@ function getRicardoDispatcher() {
 }
 
 export async function getAccessToken() {
-  if (config.get('ricardoApi.useMock')) {
-    logger.info('[MOCK] Skipping Ricardo API login — returning mock token')
-    return 'mock-token'
-  }
-
   const loginUrl = config.get('ricardoApi.loginUrl')
   const email = config.get('ricardoApi.email')
   const password = config.get('ricardoApi.password')
@@ -175,13 +161,6 @@ export async function fetchAlerts() {
 }
 
 export async function fetchSiteMetaData() {
-  if (config.get('ricardoApi.useMock')) {
-    logger.info(
-      `[MOCK] Returning mock site metadata (${MOCK_SITE_METADATA_RESPONSE.member.length} sites)`
-    )
-    return MOCK_SITE_METADATA_RESPONSE
-  }
-
   const token = await getAccessToken()
   const siteMetaDataUrl = config.get('ricardoApi.siteMetaDataUrl')
 

@@ -32,20 +32,21 @@ async function refreshCache() {
   for (const { siteId, latitude, longitude } of members) {
     if (!siteId || latitude == null || longitude == null) {
       skipped++
-      continue
-    }
-
-    const region = findRegion(parseFloat(latitude), parseFloat(longitude))
-    if (region === 'Unknown') {
-      logger.warn(
-        `[SiteCache] Could not determine region for site ${JSON.stringify({ siteId, latitude, longitude })}`
+    } else {
+      const region = findRegion(
+        Number.parseFloat(latitude),
+        Number.parseFloat(longitude)
       )
-      skipped++
-      continue
+      if (region === 'Unknown') {
+        logger.warn(
+          `[SiteCache] Could not determine region for site ${JSON.stringify({ siteId, latitude, longitude })}`
+        )
+        skipped++
+      } else {
+        siteRegionMap.set(siteId, region)
+        populated++
+      }
     }
-
-    siteRegionMap.set(siteId, region)
-    populated++
   }
 
   lastRefreshedAt = new Date()
