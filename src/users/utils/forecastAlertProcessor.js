@@ -345,7 +345,7 @@ export async function processForecastAlerts(db) {
   )
 
   if (alertIdentifiedArray.length === 0) {
-    logger.info('[Forecast] No high DAQI forecasts today — no alerts to send')
+    logger.info('[Forecast] No high DAQI forecasts today : no alerts to send')
     await markScheduleComplete(db, forecastDate)
     return
   }

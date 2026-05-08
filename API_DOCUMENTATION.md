@@ -12,12 +12,13 @@ The AQIE (Air Quality Information Exchange) Alert Back-End Service manages air q
 
 ## Endpoints Summary
 
-| Method   | Path                   | Description                            |
-| -------- | ---------------------- | -------------------------------------- |
-| `GET`    | `/health`              | Service health check                   |
-| `POST`   | `/setup-alert`         | Subscribe a user to air quality alerts |
-| `DELETE` | `/opt-out-sms-alert`   | Unsubscribe an SMS user                |
-| `DELETE` | `/opt-out-email-alert` | Unsubscribe an email user              |
+| Method   | Path                   | Description                                                           |
+| -------- | ---------------------- | --------------------------------------------------------------------- |
+| `GET`    | `/health`              | Service health check                                                  |
+| `POST`   | `/setup-alert`         | Subscribe a user to air quality alerts                                |
+| `DELETE` | `/opt-out-sms-alert`   | Unsubscribe an SMS user                                               |
+| `DELETE` | `/opt-out-email-alert` | Unsubscribe an email user                                             |
+| `GET`    | `/aqsr-alert`          | Query AQSR breach alerts by current location (lat/long) or date range |
 
 ---
 
@@ -177,6 +178,98 @@ Removes a user's email alert subscription. Deletes the user's document from the 
 
 ---
 
+## GET /aqsr-alert
+
+Queries Ricardo AQSR (Air Quality Standards Regulation) breach alerts. Supports two mutually exclusive modes.
+
+### Mode 1 — Current-day (location scoped)
+
+Returns active alerts within the last 24 hours for the region the supplied coordinates fall in.
+
+**Query Parameters:**
+
+| Parameter     | Type    | Required | Description                        |
+| ------------- | ------- | -------- | ---------------------------------- |
+| `current-day` | boolean | Yes      | Must be `true`                     |
+| `lat`         | number  | Yes      | Latitude of the location to check  |
+| `long`        | number  | Yes      | Longitude of the location to check |
+
+**Example:**
+
+```
+GET /aqsr-alert?current-day=true&lat=51.4818&long=-3.1763
+```
+
+**How it works:**
+
+1. `lat`/`long` are resolved to a UK region via the 3-step GeoJSON boundary lookup (polygon → bounding-box → nearest centroid)
+2. All monitoring site IDs for that region are retrieved from the in-memory site-region cache
+3. The Ricardo AQSR alerts feed is fetched (or returned from mock when `RICARDO_API_USE_MOCK=true`)
+4. Alerts are filtered to those where the site ID matches the region's sites, the alert is confirmed (`alertLevel=true` or `informationLevel=true`), and the date is within the last 24 hours
+
+---
+
+### Mode 2 — Date range (global)
+
+Returns all confirmed breach alerts (`alertLevel=true` or `informationLevel=true`) across all regions for the given period. No location filter applied.
+
+**Query Parameters:**
+
+| Parameter    | Type   | Required | Description                                       |
+| ------------ | ------ | -------- | ------------------------------------------------- |
+| `start-date` | string | Yes      | Start of period — `yyyy-mm-dd` format             |
+| `end-date`   | string | Yes      | End of period — `yyyy-mm-dd` format, ≥ start-date |
+
+**Example:**
+
+```
+GET /aqsr-alert?start-date=2026-05-01&end-date=2026-05-08
+```
+
+---
+
+### Response (both modes)
+
+**200 OK** — array of alert objects (empty array when no alerts match):
+
+```json
+[
+  {
+    "active-breaches": true,
+    "pollutant-name": "ozone (O3)",
+    "monitoring-station-name": "Cardiff Centre",
+    "region": "South East Wales",
+    "alert-started": "2026-05-08T09:00:00+01:00"
+  }
+]
+```
+
+**Response fields:**
+
+| Field                     | Type           | Description                                                                       |
+| ------------------------- | -------------- | --------------------------------------------------------------------------------- |
+| `active-breaches`         | boolean        | `true` if the alert date is within the last 24 hours; `false` for historical ones |
+| `pollutant-name`          | string         | Human-readable pollutant name e.g. `"ozone (O3)"`, `"nitrogen dioxide (NO2)"`     |
+| `monitoring-station-name` | string \| null | Name of the monitoring station from Ricardo site metadata; `null` if not cached   |
+| `region`                  | string \| null | Region resolved from the site's coordinates; `null` if not in cache               |
+| `alert-started`           | string         | ISO 8601 timestamp when the alert was recorded by Ricardo                         |
+
+**Validation errors (400):**
+
+| Condition                                      | Message                                                                         |
+| ---------------------------------------------- | ------------------------------------------------------------------------------- |
+| Neither mode supplied                          | `Provide either current-day=true with lat and long, or start-date and end-date` |
+| Both modes supplied simultaneously             | `Provide either current-day or start-date/end-date, not both`                   |
+| `current-day=true` but `lat` or `long` missing | `lat and long are required for current-day mode`                                |
+| `lat` or `long` not a valid number             | `lat and long must be valid numbers`                                            |
+| `start-date` or `end-date` missing             | `Both start-date and end-date are required`                                     |
+| Date not in `yyyy-mm-dd` format                | `start-date and end-date must be in yyyy-mm-dd format`                          |
+| `end-date` before `start-date`                 | `end-date must be on or after start-date`                                       |
+
+**502 Bad Gateway** — Ricardo API unavailable (real API mode only).
+
+---
+
 ## Data Models
 
 ### USERS Collection
@@ -206,7 +299,7 @@ One document per unique `user_contact` (normalized phone number or lowercase ema
 
 - `user_contact` stores the normalized phone number (`+447xxxxxxxxx`) for SMS users and the lowercased email address for email users
 - `coordinates` are stored as `[longitude, latitude]` (GeoJSON order)
-- `region` is resolved from lat/long at subscription time using GeoJSON boundary files — used by the alert schedulers to match users to affected areas
+- `region` is resolved from lat/long at subscription time using a 3-step GeoJSON lookup (direct polygon, bounding-box, nearest centroid) — used by the alert schedulers to match users to affected areas
 - **Unique index** on `user_contact` (`user_contact_unique`) enforces one document per subscriber
 
 ---
@@ -239,21 +332,21 @@ One document per unique `user_contact` (normalized phone number or lowercase ema
 
 ### Pollutant Alert Scheduler
 
-| Variable                            | Default                                                     | Description                                                                                                  |
-| ----------------------------------- | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| `RICARDO_API_EMAIL`                 | _(set in config)_                                           | Ricardo API login email                                                                                      |
-| `RICARDO_API_PASSWORD`              | _(set in config)_                                           | Ricardo API login password                                                                                   |
-| `RICARDO_API_LOGIN_URL`             | `https://uk-air-api.staging.rcdo.co.uk/api/login_check`     | Ricardo login endpoint                                                                                       |
-| `RICARDO_API_ALERTS_URL`            | `https://uk-air-api.staging.rcdo.co.uk/api/aqsr_alerts`     | Ricardo AQSR alerts endpoint                                                                                 |
-| `RICARDO_API_SITE_METADATA_URL`     | `https://uk-air-api.staging.rcdo.co.uk/api/site_meta_datas` | Ricardo site metadata endpoint (used to build region cache)                                                  |
-| `POLLUTANT_CRON_SCHEDULE`           | `*/30 * * * *`                                              | Cron expression for the pollutant alert polling job                                                          |
-| `RICARDO_API_USE_MOCK`              | `false`                                                     | Set to `true` to return hardcoded mock data instead of calling the real Ricardo API (local development only) |
-| `SMS_ALERT_TEMPLATE_ID`             | _(set in config)_                                           | SMS pollutant alert Notify template (English)                                                                |
-| `SMS_ALERT_CY_TEMPLATE_ID`          | _(set in config)_                                           | SMS pollutant alert Notify template (Welsh)                                                                  |
-| `EMAIL_ALERT_TEMPLATE_ID`           | _(set in config)_                                           | Email pollutant alert Notify template (English)                                                              |
-| `EMAIL_ALERT_CY_TEMPLATE_ID`        | _(set in config)_                                           | Email pollutant alert Notify template (Welsh)                                                                |
-| `CHECK_AIR_QUALITY_LINK`            | `https://check-air-quality.service.gov.uk/location/`        | Base URL for the "check air quality" link in alert notifications                                             |
-| `RICARDO_REGION_SYNC_CRON_SCHEDULE` | `0 1 * * *`                                                 | Cron for the daily site-region cache refresh (1am)                                                           |
+| Variable                            | Default                                                     | Description                                                                                                                                                                     |
+| ----------------------------------- | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `RICARDO_API_EMAIL`                 | _(set in config)_                                           | Ricardo API login email                                                                                                                                                         |
+| `RICARDO_API_PASSWORD`              | _(set in config)_                                           | Ricardo API login password                                                                                                                                                      |
+| `RICARDO_API_LOGIN_URL`             | `https://uk-air-api.staging.rcdo.co.uk/api/login_check`     | Ricardo login endpoint                                                                                                                                                          |
+| `RICARDO_API_ALERTS_URL`            | `https://uk-air-api.staging.rcdo.co.uk/api/aqsr_alerts`     | Ricardo AQSR alerts endpoint                                                                                                                                                    |
+| `RICARDO_API_SITE_METADATA_URL`     | `https://uk-air-api.staging.rcdo.co.uk/api/site_meta_datas` | Ricardo site metadata endpoint (used to build region cache)                                                                                                                     |
+| `POLLUTANT_CRON_SCHEDULE`           | `*/30 * * * *`                                              | Cron expression for the pollutant alert polling job                                                                                                                             |
+| `RICARDO_API_USE_MOCK`              | `true`                                                      | When `true`, `fetchAlerts` returns hardcoded mock data. `getAccessToken` and `fetchSiteMetaData` always call the real API so the site-region cache is populated with live data. |
+| `SMS_ALERT_TEMPLATE_ID`             | _(set in config)_                                           | SMS pollutant alert Notify template (English)                                                                                                                                   |
+| `SMS_ALERT_CY_TEMPLATE_ID`          | _(set in config)_                                           | SMS pollutant alert Notify template (Welsh)                                                                                                                                     |
+| `EMAIL_ALERT_TEMPLATE_ID`           | _(set in config)_                                           | Email pollutant alert Notify template (English)                                                                                                                                 |
+| `EMAIL_ALERT_CY_TEMPLATE_ID`        | _(set in config)_                                           | Email pollutant alert Notify template (Welsh)                                                                                                                                   |
+| `CHECK_AIR_QUALITY_LINK`            | `https://check-air-quality.service.gov.uk/location/`        | Base URL for the "check air quality" link in alert notifications                                                                                                                |
+| `RICARDO_REGION_SYNC_CRON_SCHEDULE` | `0 1 * * *`                                                 | Cron for the daily site-region cache refresh (1am)                                                                                                                              |
 
 ### MetOffice Forecast Alert Scheduler
 

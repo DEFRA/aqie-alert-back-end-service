@@ -61,10 +61,14 @@ Handles all HTTP communication with the Ricardo API.
 
 - Calls `getAccessToken()` to get a fresh token
 - `GET` to `RICARDO_API_SITE_METADATA_URL` with `Authorization: Bearer <token>`
-- Returns `{ member: [{ siteId, latitude, longitude }, ...] }` — ~208 monitoring sites
+- Returns `{ member: [{ siteId, siteName, latitude, longitude }, ...] }` — ~208 monitoring sites
 - Throws on non-2xx response
-- Supports mock mode — returns two hardcoded sites for local testing
+- **Always calls the real Ricardo API** — never mocked, even when `RICARDO_API_USE_MOCK=true`
 - Called at server startup (and every 24 hours) by `ricardoSiteAndRegionCache.js`
+
+**Request timeouts**
+
+All three functions (`getAccessToken`, `fetchAlerts`, `fetchSiteMetaData`) pass `signal: AbortSignal.timeout(30_000)` to every `fetch` call. Without this, `undici` has no default timeout and a hung Ricardo API would block the `onPreStart` lifecycle hook indefinitely, preventing the server from starting and the schedulers from running.
 
 ---
 
@@ -72,16 +76,36 @@ Handles all HTTP communication with the Ricardo API.
 
 Core business logic. Exported functions:
 
-| Function                                  | Description                                                                                                        |
-| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| `processPollutantAlerts(db)`              | **Main entry point** — orchestrates the full cycle                                                                 |
-| `filterValidAlerts(members)`              | Filters raw API members to `alertLevel=true && validationStatus==2`, maps to alert-detail shape including `siteId` |
-| `getMatchingUsers(users, region)`         | Returns one entry per matching user-location pair for a given region                                               |
-| `cleanPollutantName(pollutant)`           | Strips HTML tags from pollutant strings e.g. `O<sub>3</sub>` → `O3`                                                |
-| `getAlreadyProcessedAlertIds(db)`         | Returns `Set<samplingPointId>` of alerts with status `in-progress` or `processed`                                  |
-| `markAlertInProgress(db, alertDetail)`    | Upserts alert into `pollutant-alert-processing-state` with `status: "in-progress"`                                 |
-| `markAlertProcessed(db, alertId)`         | Updates `pollutant-alert-processing-state` record to `status: "processed"`                                         |
-| `sendAlertToUser(userMatch, alertDetail)` | Builds and dispatches the notification payload; returns `notificationId`                                           |
+| Function                                  | Description                                                                                                                              |
+| ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `processPollutantAlerts(db)`              | **Main entry point** — orchestrates the full cycle                                                                                       |
+| `filterValidAlerts(members)`              | Filters raw API members to `alertLevel=true && validationStatus==2`, maps to alert-detail shape including `siteId`                       |
+| `getMatchingUsers(users, region)`         | Returns one entry per matching user-location pair for a given region                                                                     |
+| `cleanPollutantName(pollutant)`           | Strips HTML tags from pollutant strings e.g. `O<sub>3</sub>` → `O3` — used for audit entries                                             |
+| `formatPollutantName(pollutant)`          | Strips HTML tags then maps chemical code to human-readable name e.g. `O<sub>3</sub> (O3)` → `ozone (O3)` — used in notification payloads |
+| `getAlreadyProcessedAlertIds(db)`         | Returns `Set<samplingPointId>` of alerts with status `in-progress` or `processed`                                                        |
+| `markAlertInProgress(db, alertDetail)`    | Upserts alert into `pollutant-alert-processing-state` with `status: "in-progress"`                                                       |
+| `markAlertProcessed(db, alertId)`         | Updates `pollutant-alert-processing-state` record to `status: "processed"`                                                               |
+| `sendAlertToUser(userMatch, alertDetail)` | Builds and dispatches the notification payload; returns `notificationId`                                                                 |
+
+**Pollutant name mapping**
+
+`formatPollutantName` applies a `POLLUTANT_NAME_MAP` lookup keyed on the chemical code extracted from the parenthesised portion of the pollutant string:
+
+| Code     | Display name      |
+| -------- | ----------------- |
+| `O3`     | ozone             |
+| `NO2`    | nitrogen dioxide  |
+| `SO2`    | sulphur dioxide   |
+| `CO`     | carbon monoxide   |
+| `PM10`   | PM10              |
+| `PM2.5`  | PM2.5             |
+| `NO`     | nitrogen monoxide |
+| `C6H6`   | benzene           |
+| `Pb`     | lead              |
+| `1,3-BD` | 1,3-butadiene     |
+
+If the code is unrecognised the cleaned string (HTML stripped) is returned as-is.
 
 **`processPollutantAlerts` step-by-step:**
 
@@ -119,11 +143,22 @@ A Hapi plugin that owns the polling timer, using `node-cron` for scheduling.
 
 In-memory `Map<siteId, region>` populated at server startup. Provides O(1) synchronous region lookup per alert, eliminating any DB query per alert.
 
-| Export                     | Description                                                                                                                                                                                                  |
-| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `initSiteCache()`          | Fetches all ~208 monitoring sites from `fetchSiteMetaData()`, resolves each site's region via `findRegion(lat, long)`, populates the module-level `Map`. Sets a 24-hour `setInterval` for automatic refresh. |
-| `stopSiteCache()`          | Cancels the refresh interval — called via `server.ext('onPreStop')` for clean pod shutdown.                                                                                                                  |
-| `getRegionForSite(siteId)` | Synchronous O(1) `Map.get()`. Returns the canonical region name or `null` if the site is not in the cache.                                                                                                   |
+| Export                        | Description                                                                                                                                                                                                  |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `initSiteCache()`             | Fetches all ~208 monitoring sites from `fetchSiteMetaData()`, resolves each site's region via `findRegion(lat, long)`, populates the module-level `Map`. Sets a 24-hour `setInterval` for automatic refresh. |
+| `stopSiteCache()`             | Cancels the refresh interval — called via `server.ext('onPreStop')` for clean pod shutdown.                                                                                                                  |
+| `getRegionForSite(siteId)`    | Synchronous O(1) `Map.get()`. Returns the canonical region name string or `null` if the site is not in the cache.                                                                                            |
+| `getSiteIdsForRegion(region)` | Returns an array of all `siteId` values whose resolved region matches the given name. Used by the `/aqsr-alert` endpoint to scope alerts to the user's region.                                               |
+| `getSiteInfo(siteId)`         | Returns the full cached object `{ region, monitoringStationName }` for a site, or `null` if not cached. Used by the `/aqsr-alert` endpoint to populate the station name in the response.                     |
+
+**Cache value shape** (as of current version):
+
+```js
+// stored per siteId
+{ region: 'Greater London', monitoringStationName: 'London Eltham' }
+```
+
+The `monitoringStationName` is sourced from the `siteName` field in the Ricardo site metadata response.
 
 If the API is unavailable during a refresh, the error is logged and existing map data is preserved — alerts continue to resolve against the last good cache state until the next successful refresh.
 
@@ -141,7 +176,7 @@ The Ricardo API includes a `region` field on each alert, but it is a JSON-encode
 
 This format is unreliable as a primary source — naming and encoding can vary across API versions, and any mismatch against the region names stored in the `USERS` collection would cause missed notifications.
 
-The primary resolution path therefore ignores this field entirely. Region is resolved via `siteId` → in-memory cache → GeoJSON polygon lookup. The raw string is only used as a fallback when the cache is empty, and `parseRegion()` correctly extracts the plain string from the JSON-encoded array. The GeoJSON `ITL125NM` property values have been aligned to match Ricardo's naming (e.g. `"North West & Merseyside"`, `"Yorkshire & Humberside"`), so even the fallback path resolves correctly.
+The primary resolution path therefore ignores this field entirely. Region is resolved via `siteId` → in-memory cache → 3-step GeoJSON lookup (direct polygon, bounding-box, nearest centroid). The raw string is only used as a fallback when the cache is empty, and `parseRegion()` correctly extracts the plain string from the JSON-encoded array. The GeoJSON `ITL125NM` property values have been aligned to match Ricardo's naming (e.g. `"North West & Merseyside"`, `"Yorkshire & Humberside"`), so even the fallback path resolves correctly.
 
 ---
 
@@ -150,15 +185,29 @@ The primary resolution path therefore ignores this field entirely. Region is res
 `src/users/utils/ricardoSiteAndRegionCache.js` holds a module-level `Map` that maps every monitoring site's `siteId` to its canonical region name:
 
 ```
-siteId       region
------------  -------------------------
-UKA00170     North West & Merseyside
-UKA00339     Greater London
-UKA00353     South East
-...          ...                        (~208 sites total)
+siteId       region                    monitoringStationName
+-----------  ------------------------  --------------------------
+UKA00170     North West & Merseyside   Glazebury
+UKA00339     Greater London            London Marylebone Road
+UKA00353     South East                Rochester Stoke
+...          ...                       ...                    (~208 sites total)
 ```
 
-The map is populated at server startup by calling `fetchSiteMetaData()` — which returns lat/long for each site — then running each coordinate through `findRegion(lat, long)`, the same GeoJSON polygon lookup used when users subscribe. This guarantees that `USERS.locations.region` and `siteRegionMap` values are always consistent, regardless of how Ricardo labels regions in its API.
+The map is populated at server startup by calling `fetchSiteMetaData()` — which returns lat/long for each site — then running each coordinate through `findRegion(lat, long)`, the same 3-step GeoJSON lookup used when users subscribe. This guarantees that `USERS.locations.region` and `siteRegionMap` values are always consistent, regardless of how Ricardo labels regions in its API.
+
+---
+
+### How `findRegion` resolves a coordinate
+
+`findRegion(lat, long)` in `src/users/utils/regionFinder.js` uses a 3-step fallback to handle the full range of coordinate positions that MetOffice's 12 km² grid and Ricardo's monitoring sites can produce — including inland water bodies, coastal edges, and offshore sea points that fall outside land polygon boundaries:
+
+1. **Direct point-in-polygon** — checks whether the coordinate falls within any of the 18 ITL1/ITL2 land boundary polygons. Covers the majority of monitoring sites.
+
+2. **Bounding-box fallback** — if step 1 fails (e.g. a site on a lake or tidal estuary), checks whether the coordinate falls within any region's axis-aligned bounding box. Catches inland water bodies that sit inside a region's rectangular envelope.
+
+3. **Nearest centroid fallback** — if step 2 also fails (e.g. an offshore or sea-based grid point), computes the great-circle distance to each region's centroid and returns the closest one. Ensures no coordinate ever returns `Unknown` as long as at least one region is loaded.
+
+Bounding boxes and centroids are pre-computed from the GeoJSON at module load time (using `@turf/bbox` and `@turf/centroid`) so there is no per-call overhead beyond the polygon intersection tests themselves.
 
 ---
 
@@ -166,7 +215,7 @@ The map is populated at server startup by calling `fetchSiteMetaData()` — whic
 
 `ricardoSiteAndRegionCache.js` uses a different initialisation pattern to `regionFinder.js`:
 
-**`regionFinder.js`** reads local GeoJSON files via `readFileSync` — a synchronous call that is safe at module level. The `regions[]` array is fully populated before any other code runs, with no network dependency.
+**`regionFinder.js`** reads local GeoJSON files via `readFileSync` — a synchronous call that is safe at module level. The `regions[]` array (including pre-computed bounding boxes and centroids) is fully populated before any other code runs, with no network dependency.
 
 **`ricardoSiteAndRegionCache.js`** must call `fetchSiteMetaData()` — an async network request to the Ricardo API. Running async calls at module level would crash the server if the API is unavailable at startup. Instead:
 
@@ -398,7 +447,7 @@ The `templateId` is resolved based on `alertType` and `lang` from the USERS docu
   "personalisation": {
     "location": "Staines",
     "concentration": "168",
-    "Pollutant": "O3 (O3)",
+    "Pollutant": "ozone (O3)",
     "checkAirQualityLink": "https://check-air-quality.service.gov.uk/location/staines?lang=en"
   }
 }
@@ -413,7 +462,7 @@ The `templateId` is resolved based on `alertType` and `lang` from the USERS docu
   "personalisation": {
     "location": "Staines",
     "concentration": "168",
-    "Pollutant": "O3 (O3)",
+    "Pollutant": "ozone (O3)",
     "checkAirQualityLink": "https://check-air-quality.service.gov.uk/location/staines?lang=en",
     "unsubscribeLink": "https://.../unsubscribe-email-link?email=user%40example.com"
   }
@@ -451,7 +500,7 @@ All log statements in `pollutantAlertProcessor.js` are prefixed with `[Pollutant
 | `RICARDO_API_LOGIN_URL`      | `https://uk-air-api.staging.rcdo.co.uk/api/login_check` | No       |
 | `RICARDO_API_ALERTS_URL`     | `https://uk-air-api.staging.rcdo.co.uk/api/aqsr_alerts` | No       |
 | `POLLUTANT_CRON_SCHEDULE`    | `*/30 * * * *`                                          | No       |
-| `RICARDO_API_USE_MOCK`       | `false`                                                 | No       |
+| `RICARDO_API_USE_MOCK`       | `true`                                                  | No       |
 | `SMS_ALERT_TEMPLATE_ID`      | _(set in config)_                                       | Yes      |
 | `SMS_ALERT_CY_TEMPLATE_ID`   | _(set in config)_                                       | Yes      |
 | `EMAIL_ALERT_TEMPLATE_ID`    | _(set in config)_                                       | Yes      |

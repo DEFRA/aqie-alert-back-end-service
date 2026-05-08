@@ -190,7 +190,7 @@ const config = convict({
     useMock: {
       doc: 'Use mock Ricardo API response instead of making real HTTP calls (for local testing)',
       format: Boolean,
-      default: false,
+      default: true,
       env: 'RICARDO_API_USE_MOCK'
     },
     siteMetaDataUrl: {

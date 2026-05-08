@@ -1,0 +1,459 @@
+import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { aqsrAlertHandler } from './aqsrAlertController.js'
+
+vi.mock('../utils/ricardoApiClient.js', () => ({
+  fetchAlerts: vi.fn()
+}))
+
+vi.mock('../utils/regionFinder.js', () => ({
+  findRegion: vi.fn()
+}))
+
+vi.mock('../utils/ricardoSiteAndRegionCache.js', () => ({
+  getSiteIdsForRegion: vi.fn(),
+  getSiteInfo: vi.fn()
+}))
+
+vi.mock('../utils/pollutantAlertProcessor.js', () => ({
+  formatPollutantName: vi.fn((p) => p),
+  cleanPollutantName: vi.fn((p) => p),
+  filterValidAlerts: vi.fn(),
+  getMatchingUsers: vi.fn(),
+  formatLocationForUrl: vi.fn(),
+  getAlreadyProcessedAlertIds: vi.fn(),
+  markAlertInProgress: vi.fn(),
+  markAlertProcessed: vi.fn(),
+  sendAlertToUser: vi.fn()
+}))
+
+vi.mock('../../common/helpers/logging/logger.js', () => ({
+  createLogger: () => ({
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn()
+  })
+}))
+
+vi.mock('../utils/constants.js', () => ({
+  STATUS_OK: 200
+}))
+
+const REGION = 'Yorkshire & Humber'
+const SITE_ID_1 = 'UKA00353'
+const SITE_ID_2 = 'UKA00412'
+
+const recentDate = new Date(Date.now() - 60 * 60 * 1000).toISOString()
+const oldDate = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString()
+
+function makeAlert(overrides = {}) {
+  return {
+    siteId: SITE_ID_1,
+    pollutant: 'O<sub>3</sub> (O3)',
+    alertLevel: true,
+    informationLevel: false,
+    date: recentDate,
+    ...overrides
+  }
+}
+
+describe('aqsrAlertController', () => {
+  let mockFetchAlerts
+  let mockFindRegion
+  let mockGetSiteIdsForRegion
+  let mockGetSiteInfo
+  let mockH
+
+  beforeEach(async () => {
+    vi.clearAllMocks()
+
+    mockFetchAlerts = vi.mocked(
+      (await import('../utils/ricardoApiClient.js')).fetchAlerts
+    )
+    mockFindRegion = vi.mocked(
+      (await import('../utils/regionFinder.js')).findRegion
+    )
+    mockGetSiteIdsForRegion = vi.mocked(
+      (await import('../utils/ricardoSiteAndRegionCache.js'))
+        .getSiteIdsForRegion
+    )
+    mockGetSiteInfo = vi.mocked(
+      (await import('../utils/ricardoSiteAndRegionCache.js')).getSiteInfo
+    )
+
+    mockH = {
+      response: vi.fn().mockReturnValue({ code: vi.fn().mockReturnValue({}) })
+    }
+
+    mockGetSiteInfo.mockReturnValue({
+      region: REGION,
+      monitoringStationName: 'Leeds Centre'
+    })
+  })
+
+  function makeRequest(query) {
+    return {
+      headers: { 'x-request-id': 'test-req-id' },
+      query
+    }
+  }
+
+  describe('Mode 1 — currentDay=true', () => {
+    it('should return empty array when region is Unknown', async () => {
+      mockFindRegion.mockReturnValue('Unknown')
+
+      await aqsrAlertHandler(
+        makeRequest({ lat: 0, long: 0, currentDay: true }),
+        mockH
+      )
+
+      expect(mockH.response).toHaveBeenCalledWith([])
+    })
+
+    it('should return empty array when no sites are cached for the region', async () => {
+      mockFindRegion.mockReturnValue(REGION)
+      mockGetSiteIdsForRegion.mockReturnValue([])
+
+      await aqsrAlertHandler(
+        makeRequest({ lat: 53.8, long: -1.5, currentDay: true }),
+        mockH
+      )
+
+      expect(mockH.response).toHaveBeenCalledWith([])
+    })
+
+    it('should return 502 when Ricardo API throws', async () => {
+      mockFindRegion.mockReturnValue(REGION)
+      mockGetSiteIdsForRegion.mockReturnValue([SITE_ID_1])
+      mockFetchAlerts.mockRejectedValue(new Error('Connection refused'))
+
+      const result = await aqsrAlertHandler(
+        makeRequest({ lat: 53.8, long: -1.5, currentDay: true }),
+        mockH
+      )
+
+      expect(result.isBoom).toBe(true)
+      expect(result.output.statusCode).toBe(502)
+    })
+
+    it('should fetch Ricardo without date params in current-day mode', async () => {
+      mockFindRegion.mockReturnValue(REGION)
+      mockGetSiteIdsForRegion.mockReturnValue([SITE_ID_1])
+      mockFetchAlerts.mockResolvedValue({ member: [] })
+
+      await aqsrAlertHandler(
+        makeRequest({ lat: 53.8, long: -1.5, currentDay: true }),
+        mockH
+      )
+
+      expect(mockFetchAlerts).toHaveBeenCalledWith({})
+    })
+
+    it('should return active alert entries when all three conditions pass', async () => {
+      mockFindRegion.mockReturnValue(REGION)
+      mockGetSiteIdsForRegion.mockReturnValue([SITE_ID_1])
+      mockFetchAlerts.mockResolvedValue({
+        member: [makeAlert({ siteId: SITE_ID_1, date: recentDate })]
+      })
+
+      await aqsrAlertHandler(
+        makeRequest({ lat: 53.8, long: -1.5, currentDay: true }),
+        mockH
+      )
+
+      const responseArg = mockH.response.mock.calls[0][0]
+      expect(responseArg).toHaveLength(1)
+      expect(responseArg[0]['active-breaches']).toBe(true)
+      expect(responseArg[0].region).toBe(REGION)
+      expect(responseArg[0]['monitoring-station-name']).toBe('Leeds Centre')
+      expect(responseArg[0]['alert-started']).toBe(recentDate)
+    })
+
+    it('should return multiple entries when multiple alerts pass', async () => {
+      mockFindRegion.mockReturnValue(REGION)
+      mockGetSiteIdsForRegion.mockReturnValue([SITE_ID_1, SITE_ID_2])
+      mockFetchAlerts.mockResolvedValue({
+        member: [
+          makeAlert({ siteId: SITE_ID_1, date: recentDate }),
+          makeAlert({
+            siteId: SITE_ID_2,
+            pollutant: 'NO2',
+            date: recentDate
+          })
+        ]
+      })
+
+      await aqsrAlertHandler(
+        makeRequest({ lat: 53.8, long: -1.5, currentDay: true }),
+        mockH
+      )
+
+      const responseArg = mockH.response.mock.calls[0][0]
+      expect(responseArg).toHaveLength(2)
+    })
+
+    it('should return empty array when all alerts are older than 24h', async () => {
+      mockFindRegion.mockReturnValue(REGION)
+      mockGetSiteIdsForRegion.mockReturnValue([SITE_ID_1])
+      mockFetchAlerts.mockResolvedValue({
+        member: [makeAlert({ siteId: SITE_ID_1, date: oldDate })]
+      })
+
+      await aqsrAlertHandler(
+        makeRequest({ lat: 53.8, long: -1.5, currentDay: true }),
+        mockH
+      )
+
+      expect(mockH.response).toHaveBeenCalledWith([])
+    })
+
+    it('should exclude alert when siteId is not in the region set', async () => {
+      mockFindRegion.mockReturnValue(REGION)
+      mockGetSiteIdsForRegion.mockReturnValue([SITE_ID_1])
+      mockFetchAlerts.mockResolvedValue({
+        member: [makeAlert({ siteId: 'UKA99999', date: recentDate })]
+      })
+
+      await aqsrAlertHandler(
+        makeRequest({ lat: 53.8, long: -1.5, currentDay: true }),
+        mockH
+      )
+
+      expect(mockH.response).toHaveBeenCalledWith([])
+    })
+
+    it('should exclude alert when alertLevel and informationLevel are both false', async () => {
+      mockFindRegion.mockReturnValue(REGION)
+      mockGetSiteIdsForRegion.mockReturnValue([SITE_ID_1])
+      mockFetchAlerts.mockResolvedValue({
+        member: [
+          makeAlert({
+            siteId: SITE_ID_1,
+            date: recentDate,
+            alertLevel: false,
+            informationLevel: false
+          })
+        ]
+      })
+
+      await aqsrAlertHandler(
+        makeRequest({ lat: 53.8, long: -1.5, currentDay: true }),
+        mockH
+      )
+
+      expect(mockH.response).toHaveBeenCalledWith([])
+    })
+
+    it('should include alert when only informationLevel is true', async () => {
+      mockFindRegion.mockReturnValue(REGION)
+      mockGetSiteIdsForRegion.mockReturnValue([SITE_ID_1])
+      mockFetchAlerts.mockResolvedValue({
+        member: [
+          makeAlert({
+            siteId: SITE_ID_1,
+            date: recentDate,
+            alertLevel: false,
+            informationLevel: true
+          })
+        ]
+      })
+
+      await aqsrAlertHandler(
+        makeRequest({ lat: 53.8, long: -1.5, currentDay: true }),
+        mockH
+      )
+
+      const responseArg = mockH.response.mock.calls[0][0]
+      expect(responseArg).toHaveLength(1)
+      expect(responseArg[0]['active-breaches']).toBe(true)
+    })
+
+    it('should return empty array when Ricardo returns no members', async () => {
+      mockFindRegion.mockReturnValue(REGION)
+      mockGetSiteIdsForRegion.mockReturnValue([SITE_ID_1])
+      mockFetchAlerts.mockResolvedValue({ member: [] })
+
+      await aqsrAlertHandler(
+        makeRequest({ lat: 53.8, long: -1.5, currentDay: true }),
+        mockH
+      )
+
+      expect(mockH.response).toHaveBeenCalledWith([])
+    })
+  })
+
+  describe('Mode 2 — startDate + endDate', () => {
+    it('should return 502 when Ricardo API throws', async () => {
+      mockFetchAlerts.mockRejectedValue(new Error('Timeout'))
+
+      const result = await aqsrAlertHandler(
+        makeRequest({ startDate: '2024-12-01', endDate: '2025-08-13' }),
+        mockH
+      )
+
+      expect(result.isBoom).toBe(true)
+      expect(result.output.statusCode).toBe(502)
+    })
+
+    it('should fetch Ricardo with correct start-date and end-date params', async () => {
+      mockFetchAlerts.mockResolvedValue({ member: [] })
+
+      await aqsrAlertHandler(
+        makeRequest({ startDate: '2024-12-01', endDate: '2025-08-13' }),
+        mockH
+      )
+
+      expect(mockFetchAlerts).toHaveBeenCalledWith({
+        startDate: '2024-12-01',
+        endDate: '2025-08-13'
+      })
+    })
+
+    it('should return empty array when Ricardo returns no members', async () => {
+      mockFetchAlerts.mockResolvedValue({ member: [] })
+
+      await aqsrAlertHandler(
+        makeRequest({ startDate: '2024-12-01', endDate: '2025-08-13' }),
+        mockH
+      )
+
+      expect(mockH.response).toHaveBeenCalledWith([])
+    })
+
+    it('should set active-breaches: true for alert within last 24h', async () => {
+      mockFetchAlerts.mockResolvedValue({
+        member: [makeAlert({ siteId: SITE_ID_1, date: recentDate })]
+      })
+
+      await aqsrAlertHandler(
+        makeRequest({ startDate: '2024-12-01', endDate: '2025-08-13' }),
+        mockH
+      )
+
+      const responseArg = mockH.response.mock.calls[0][0]
+      expect(responseArg).toHaveLength(1)
+      expect(responseArg[0]['active-breaches']).toBe(true)
+    })
+
+    it('should set active-breaches: false for alert older than 24h', async () => {
+      mockFetchAlerts.mockResolvedValue({
+        member: [makeAlert({ siteId: SITE_ID_1, date: oldDate })]
+      })
+
+      await aqsrAlertHandler(
+        makeRequest({ startDate: '2024-12-01', endDate: '2025-08-13' }),
+        mockH
+      )
+
+      const responseArg = mockH.response.mock.calls[0][0]
+      expect(responseArg).toHaveLength(1)
+      expect(responseArg[0]['active-breaches']).toBe(false)
+    })
+
+    it('should return mix of active and historic alerts', async () => {
+      mockFetchAlerts.mockResolvedValue({
+        member: [
+          makeAlert({ siteId: SITE_ID_1, date: recentDate }),
+          makeAlert({ siteId: SITE_ID_2, date: oldDate })
+        ]
+      })
+
+      await aqsrAlertHandler(
+        makeRequest({ startDate: '2024-12-01', endDate: '2025-08-13' }),
+        mockH
+      )
+
+      const responseArg = mockH.response.mock.calls[0][0]
+      expect(responseArg).toHaveLength(2)
+      expect(responseArg[0]['active-breaches']).toBe(true)
+      expect(responseArg[1]['active-breaches']).toBe(false)
+    })
+
+    it('should exclude alerts where breach is not confirmed', async () => {
+      mockFetchAlerts.mockResolvedValue({
+        member: [
+          makeAlert({
+            siteId: SITE_ID_1,
+            date: recentDate,
+            alertLevel: false,
+            informationLevel: false
+          }),
+          makeAlert({ siteId: SITE_ID_2, date: oldDate, alertLevel: true })
+        ]
+      })
+
+      await aqsrAlertHandler(
+        makeRequest({ startDate: '2024-12-01', endDate: '2025-08-13' }),
+        mockH
+      )
+
+      const responseArg = mockH.response.mock.calls[0][0]
+      expect(responseArg).toHaveLength(1)
+      expect(responseArg[0]['active-breaches']).toBe(false)
+    })
+
+    it('should not filter by region — includes alerts from all UK regions', async () => {
+      mockGetSiteInfo
+        .mockReturnValueOnce({
+          region: 'Yorkshire & Humber',
+          monitoringStationName: 'Leeds Centre'
+        })
+        .mockReturnValueOnce({
+          region: 'London',
+          monitoringStationName: 'London Marylebone Road'
+        })
+
+      mockFetchAlerts.mockResolvedValue({
+        member: [
+          makeAlert({ siteId: SITE_ID_1, date: recentDate }),
+          makeAlert({ siteId: SITE_ID_2, date: oldDate })
+        ]
+      })
+
+      await aqsrAlertHandler(
+        makeRequest({ startDate: '2024-12-01', endDate: '2025-08-13' }),
+        mockH
+      )
+
+      expect(mockFindRegion).not.toHaveBeenCalled()
+      const responseArg = mockH.response.mock.calls[0][0]
+      expect(responseArg).toHaveLength(2)
+    })
+
+    it('should populate monitoring-station-name and region from cache by siteId', async () => {
+      mockGetSiteInfo.mockReturnValue({
+        region: 'North West',
+        monitoringStationName: 'Manchester Piccadilly'
+      })
+      mockFetchAlerts.mockResolvedValue({
+        member: [makeAlert({ siteId: SITE_ID_1, date: recentDate })]
+      })
+
+      await aqsrAlertHandler(
+        makeRequest({ startDate: '2024-12-01', endDate: '2025-08-13' }),
+        mockH
+      )
+
+      const responseArg = mockH.response.mock.calls[0][0]
+      expect(responseArg[0].region).toBe('North West')
+      expect(responseArg[0]['monitoring-station-name']).toBe(
+        'Manchester Piccadilly'
+      )
+    })
+
+    it('should set monitoring-station-name to null when siteId not in cache', async () => {
+      mockGetSiteInfo.mockReturnValue(null)
+      mockFetchAlerts.mockResolvedValue({
+        member: [makeAlert({ siteId: 'UNKNOWN', date: recentDate })]
+      })
+
+      await aqsrAlertHandler(
+        makeRequest({ startDate: '2024-12-01', endDate: '2025-08-13' }),
+        mockH
+      )
+
+      const responseArg = mockH.response.mock.calls[0][0]
+      expect(responseArg[0]['monitoring-station-name']).toBeNull()
+      expect(responseArg[0].region).toBeNull()
+    })
+  })
+})
