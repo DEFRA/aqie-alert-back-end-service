@@ -29,7 +29,7 @@ async function refreshCache() {
   let populated = 0
   let skipped = 0
 
-  for (const { siteId, latitude, longitude } of members) {
+  for (const { siteId, latitude, longitude, siteName } of members) {
     if (!siteId || latitude == null || longitude == null) {
       skipped++
     } else {
@@ -43,7 +43,10 @@ async function refreshCache() {
         )
         skipped++
       } else {
-        siteRegionMap.set(siteId, region)
+        siteRegionMap.set(siteId, {
+          region,
+          monitoringStationName: siteName ?? null
+        })
         populated++
       }
     }
@@ -74,5 +77,19 @@ export function stopSiteCache() {
 }
 
 export function getRegionForSite(siteId) {
+  return siteRegionMap.get(siteId)?.region ?? null
+}
+
+export function getSiteIdsForRegion(region) {
+  const siteIds = []
+  for (const [siteId, siteInfo] of siteRegionMap) {
+    if (siteInfo.region === region) {
+      siteIds.push(siteId)
+    }
+  }
+  return siteIds
+}
+
+export function getSiteInfo(siteId) {
   return siteRegionMap.get(siteId) ?? null
 }

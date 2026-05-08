@@ -107,12 +107,13 @@ git config --global core.autocrlf false
 
 ## API endpoints
 
-| Method   | Endpoint               | Description                                          |
-| :------- | :--------------------- | :--------------------------------------------------- |
-| `GET`    | `/health`              | Service health check                                 |
-| `POST`   | `/setup-alert`         | Subscribe a user to air quality alerts at a location |
-| `DELETE` | `/opt-out-sms-alert`   | Unsubscribe an SMS user by phone number              |
-| `DELETE` | `/opt-out-email-alert` | Unsubscribe an email user by email address           |
+| Method   | Endpoint               | Description                                                           |
+| :------- | :--------------------- | :-------------------------------------------------------------------- |
+| `GET`    | `/health`              | Service health check                                                  |
+| `POST`   | `/setup-alert`         | Subscribe a user to air quality alerts at a location                  |
+| `DELETE` | `/opt-out-sms-alert`   | Unsubscribe an SMS user by phone number                               |
+| `DELETE` | `/opt-out-email-alert` | Unsubscribe an email user by email address                            |
+| `GET`    | `/aqsr-alert`          | Query AQSR breach alerts by current location (lat/long) or date range |
 
 Full request/response details, validation rules, field descriptions, and environment variables are in [API_DOCUMENTATION.md](./API_DOCUMENTATION.md).
 

@@ -145,6 +145,63 @@ describe('ricardoApiClient', () => {
       )
     })
 
+    it('should call alerts URL without query params when no options provided', async () => {
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          json: vi.fn().mockResolvedValue({ token: 'test-token' })
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: vi.fn().mockResolvedValue({ totalItems: 0, member: [] })
+        })
+
+      await fetchAlerts()
+
+      expect(mockFetch).toHaveBeenLastCalledWith(
+        'https://uk-air-api.staging.rcdo.co.uk/api/aqsr_alerts',
+        expect.any(Object)
+      )
+    })
+
+    it('should append start-date and end-date as query params when provided', async () => {
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          json: vi.fn().mockResolvedValue({ token: 'test-token' })
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: vi.fn().mockResolvedValue({ totalItems: 0, member: [] })
+        })
+
+      await fetchAlerts({ startDate: '2024-12-01', endDate: '2025-08-13' })
+
+      expect(mockFetch).toHaveBeenLastCalledWith(
+        'https://uk-air-api.staging.rcdo.co.uk/api/aqsr_alerts?start-date=2024-12-01&end-date=2025-08-13',
+        expect.any(Object)
+      )
+    })
+
+    it('should not append query params when only startDate is provided', async () => {
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          json: vi.fn().mockResolvedValue({ token: 'test-token' })
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: vi.fn().mockResolvedValue({ totalItems: 0, member: [] })
+        })
+
+      await fetchAlerts({ startDate: '2024-12-01' })
+
+      expect(mockFetch).toHaveBeenLastCalledWith(
+        'https://uk-air-api.staging.rcdo.co.uk/api/aqsr_alerts',
+        expect.any(Object)
+      )
+    })
+
     it('should use ProxyAgent dispatcher when proxy is configured', async () => {
       const { provideProxy } = await import(
         '../../common/helpers/proxy/proxy.js'

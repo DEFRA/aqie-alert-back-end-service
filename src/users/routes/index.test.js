@@ -18,6 +18,15 @@ vi.mock('./opt-out-alert.js', () => ({
   }
 }))
 
+vi.mock('./aqsr-alert.js', () => ({
+  aqsrAlert: {
+    method: 'GET',
+    path: '/aqsr-alert',
+    options: { validate: { query: vi.fn() } },
+    handler: vi.fn()
+  }
+}))
+
 vi.mock('../../common/helpers/logging/logger.js', () => ({
   createLogger: () => ({
     info: vi.fn(),
@@ -33,8 +42,8 @@ describe('user routes index', () => {
       expect(Array.isArray(userRoutes)).toBe(true)
     })
 
-    it('should contain setup-alert and opt-out-alert routes', () => {
-      expect(userRoutes).toHaveLength(3)
+    it('should contain setup-alert, opt-out-alert and aqsr-alert routes', () => {
+      expect(userRoutes).toHaveLength(4)
       expect(userRoutes[0]).toEqual({
         method: 'POST',
         path: '/setup-alert',
@@ -60,6 +69,16 @@ describe('user routes index', () => {
           }
         }
       })
+      expect(userRoutes[3]).toEqual({
+        method: 'GET',
+        path: '/aqsr-alert',
+        options: {
+          validate: {
+            query: expect.any(Function)
+          }
+        },
+        handler: expect.any(Function)
+      })
     })
 
     it('should have correct route structure', () => {
@@ -71,8 +90,8 @@ describe('user routes index', () => {
   })
 
   describe('Route count validation', () => {
-    it('should have exactly 3 routes', () => {
-      expect(userRoutes).toHaveLength(3)
+    it('should have exactly 4 routes', () => {
+      expect(userRoutes).toHaveLength(4)
     })
   })
 })

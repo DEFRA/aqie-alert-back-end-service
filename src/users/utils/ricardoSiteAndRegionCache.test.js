@@ -31,20 +31,37 @@ const LON_NW = '-2.47'
 const LAT_LONDON = '51.5074'
 const LON_LONDON = '-0.1278'
 
+const STATION_NW = 'Manchester Piccadilly'
+const STATION_LONDON = 'London Marylebone Road'
+
 const TTL_24H_MS = 24 * 60 * 60 * 1000
 const TWENTY_THREE_HOURS_MS = 23 * 60 * 60 * 1000
 
 const siteNW = { siteId: SITE_ID_NW, latitude: LAT_NW, longitude: LON_NW }
+const siteNWWithName = {
+  siteId: SITE_ID_NW,
+  latitude: LAT_NW,
+  longitude: LON_NW,
+  siteName: STATION_NW
+}
 const siteLondon = {
   siteId: SITE_ID_LONDON,
   latitude: LAT_LONDON,
   longitude: LON_LONDON
+}
+const siteLondonWithName = {
+  siteId: SITE_ID_LONDON,
+  latitude: LAT_LONDON,
+  longitude: LON_LONDON,
+  siteName: STATION_LONDON
 }
 
 describe('ricardoSiteAndRegionCache', () => {
   let initSiteCache
   let stopSiteCache
   let getRegionForSite
+  let getSiteIdsForRegion
+  let getSiteInfo
   let mockFetchSiteMetaData
   let mockFindRegion
 
@@ -57,6 +74,8 @@ describe('ricardoSiteAndRegionCache', () => {
     initSiteCache = mod.initSiteCache
     stopSiteCache = mod.stopSiteCache
     getRegionForSite = mod.getRegionForSite
+    getSiteIdsForRegion = mod.getSiteIdsForRegion
+    getSiteInfo = mod.getSiteInfo
 
     mockFetchSiteMetaData = vi.mocked(
       (await import('./ricardoApiClient.js')).fetchSiteMetaData
@@ -82,6 +101,143 @@ describe('ricardoSiteAndRegionCache', () => {
 
       expect(getRegionForSite('UNKNOWN-SITE')).toBeNull()
     })
+
+    it('should return region string for a known siteId', async () => {
+      mockFetchSiteMetaData.mockResolvedValue({ member: [siteNW] })
+      mockFindRegion.mockReturnValue(REGION_NW)
+
+      await initSiteCache()
+
+      expect(getRegionForSite(SITE_ID_NW)).toBe(REGION_NW)
+    })
+
+    it('should return region string even when siteName is present in cache', async () => {
+      mockFetchSiteMetaData.mockResolvedValue({ member: [siteNWWithName] })
+      mockFindRegion.mockReturnValue(REGION_NW)
+
+      await initSiteCache()
+
+      expect(getRegionForSite(SITE_ID_NW)).toBe(REGION_NW)
+    })
+  })
+
+  describe('getSiteInfo', () => {
+    it('should return null when cache has not been initialised', () => {
+      expect(getSiteInfo(SITE_ID_NW)).toBeNull()
+    })
+
+    it('should return null for unknown siteId', async () => {
+      mockFetchSiteMetaData.mockResolvedValue({ member: [siteNW] })
+      mockFindRegion.mockReturnValue(REGION_NW)
+
+      await initSiteCache()
+
+      expect(getSiteInfo('UNKNOWN-SITE')).toBeNull()
+    })
+
+    it('should return region and null monitoringStationName when siteName is absent', async () => {
+      mockFetchSiteMetaData.mockResolvedValue({ member: [siteNW] })
+      mockFindRegion.mockReturnValue(REGION_NW)
+
+      await initSiteCache()
+
+      expect(getSiteInfo(SITE_ID_NW)).toEqual({
+        region: REGION_NW,
+        monitoringStationName: null
+      })
+    })
+
+    it('should return region and monitoringStationName when siteName is present', async () => {
+      mockFetchSiteMetaData.mockResolvedValue({ member: [siteNWWithName] })
+      mockFindRegion.mockReturnValue(REGION_NW)
+
+      await initSiteCache()
+
+      expect(getSiteInfo(SITE_ID_NW)).toEqual({
+        region: REGION_NW,
+        monitoringStationName: STATION_NW
+      })
+    })
+
+    it('should return correct info for each of multiple populated sites', async () => {
+      mockFetchSiteMetaData.mockResolvedValue({
+        member: [siteNWWithName, siteLondonWithName]
+      })
+      mockFindRegion
+        .mockReturnValueOnce(REGION_NW)
+        .mockReturnValueOnce(REGION_LONDON)
+
+      await initSiteCache()
+
+      expect(getSiteInfo(SITE_ID_NW)).toEqual({
+        region: REGION_NW,
+        monitoringStationName: STATION_NW
+      })
+      expect(getSiteInfo(SITE_ID_LONDON)).toEqual({
+        region: REGION_LONDON,
+        monitoringStationName: STATION_LONDON
+      })
+    })
+  })
+
+  describe('getSiteIdsForRegion', () => {
+    it('should return empty array when cache has not been initialised', () => {
+      expect(getSiteIdsForRegion(REGION_NW)).toEqual([])
+    })
+
+    it('should return empty array for unknown region', async () => {
+      mockFetchSiteMetaData.mockResolvedValue({ member: [siteNW] })
+      mockFindRegion.mockReturnValue(REGION_NW)
+
+      await initSiteCache()
+
+      expect(getSiteIdsForRegion('Unknown Region')).toEqual([])
+    })
+
+    it('should return siteId for a single matching region', async () => {
+      mockFetchSiteMetaData.mockResolvedValue({ member: [siteNW] })
+      mockFindRegion.mockReturnValue(REGION_NW)
+
+      await initSiteCache()
+
+      expect(getSiteIdsForRegion(REGION_NW)).toEqual([SITE_ID_NW])
+    })
+
+    it('should return all siteIds for a region with multiple matching sites', async () => {
+      const siteNW2 = {
+        siteId: 'UKA00171',
+        latitude: '53.50',
+        longitude: '-2.50'
+      }
+      mockFetchSiteMetaData.mockResolvedValue({
+        member: [siteNW, siteNW2, siteLondon]
+      })
+      mockFindRegion
+        .mockReturnValueOnce(REGION_NW)
+        .mockReturnValueOnce(REGION_NW)
+        .mockReturnValueOnce(REGION_LONDON)
+
+      await initSiteCache()
+
+      const result = getSiteIdsForRegion(REGION_NW)
+      expect(result).toHaveLength(2)
+      expect(result).toContain(SITE_ID_NW)
+      expect(result).toContain('UKA00171')
+    })
+
+    it('should not include siteIds from a different region', async () => {
+      mockFetchSiteMetaData.mockResolvedValue({
+        member: [siteNW, siteLondon]
+      })
+      mockFindRegion
+        .mockReturnValueOnce(REGION_NW)
+        .mockReturnValueOnce(REGION_LONDON)
+
+      await initSiteCache()
+
+      expect(getSiteIdsForRegion(REGION_NW)).toEqual([SITE_ID_NW])
+      expect(getSiteIdsForRegion(REGION_LONDON)).toEqual([SITE_ID_LONDON])
+    })
   })
 
   describe('initSiteCache', () => {
@@ -96,6 +252,30 @@ describe('ricardoSiteAndRegionCache', () => {
         parseFloat(LON_NW)
       )
       expect(getRegionForSite(SITE_ID_NW)).toBe(REGION_NW)
+    })
+
+    it('should store monitoringStationName from siteName field', async () => {
+      mockFetchSiteMetaData.mockResolvedValue({ member: [siteNWWithName] })
+      mockFindRegion.mockReturnValue(REGION_NW)
+
+      await initSiteCache()
+
+      expect(getSiteInfo(SITE_ID_NW)).toEqual({
+        region: REGION_NW,
+        monitoringStationName: STATION_NW
+      })
+    })
+
+    it('should store null monitoringStationName when siteName is missing', async () => {
+      mockFetchSiteMetaData.mockResolvedValue({ member: [siteNW] })
+      mockFindRegion.mockReturnValue(REGION_NW)
+
+      await initSiteCache()
+
+      expect(getSiteInfo(SITE_ID_NW)).toEqual({
+        region: REGION_NW,
+        monitoringStationName: null
+      })
     })
 
     it('should populate multiple sites correctly', async () => {

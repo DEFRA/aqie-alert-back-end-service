@@ -20,7 +20,7 @@ This feature adds automated DAQI (Daily Air Quality Index) forecast alert notifi
 │    │                                                              │
 │    ├── forecastApiClient.js ──► GET /forecast (aqie-forecast-api) │
 │    │                                                              │
-│    ├── regionFinder.js       ──► GeoJSON boundary check           │
+│    ├── regionFinder.js       ──► 3-step GeoJSON region lookup      │
 │    │                                                              │
 │    ├── MongoDB: forecast-schedule-state  (daily de-dup)           │
 │    ├── MongoDB: USERS                    (find by region)         │
@@ -57,15 +57,15 @@ Handles HTTP communication with `aqie-forecast-api`.
 
 Core business logic. Exported functions:
 
-| Function                                                   | Description                                                          |
-| ---------------------------------------------------------- | -------------------------------------------------------------------- |
-| `processForecastAlerts(db)`                                | **Main entry point** — orchestrates the full daily cycle             |
-| `isCurrentDate(updatedStr)`                                | Returns `true` if an ISO timestamp string belongs to today (UTC)     |
-| `addRegionsToForecasts(forecasts)`                         | Calls `findRegion()` for each station and attaches a `region` field  |
-| `filterHighDaqiForecasts(forecastsWithRegions, threshold)` | Keeps only stations where today's DAQI value `>= threshold`          |
-| `groupAlertsByRegion(alertIdentifiedArray)`                | Deduplicates to one entry per affected region                        |
-| `getDaqiLabel()`                                           | Returns `"high"` — any DAQI breach (≥ 7) is classified as High       |
-| `buildAuditEntries(users, regionAlerts, forecastDate)`     | Builds one audit record per user-location pair for each alert region |
+| Function                                                   | Description                                                                                                                                      |
+| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `processForecastAlerts(db)`                                | **Main entry point** — orchestrates the full daily cycle                                                                                         |
+| `isCurrentDate(updatedStr)`                                | Returns `true` if an ISO timestamp string belongs to today (UTC)                                                                                 |
+| `addRegionsToForecasts(forecasts)`                         | Calls `findRegion()` for each station and attaches a `region` field using the 3-step fallback (direct polygon → bounding-box → nearest centroid) |
+| `filterHighDaqiForecasts(forecastsWithRegions, threshold)` | Keeps only stations where today's DAQI value `>= threshold`                                                                                      |
+| `groupAlertsByRegion(alertIdentifiedArray)`                | Deduplicates to one entry per affected region                                                                                                    |
+| `getDaqiLabel()`                                           | Returns `"high"` — any DAQI breach (≥ 7) is classified as High                                                                                   |
+| `buildAuditEntries(users, regionAlerts, forecastDate)`     | Builds one audit record per user-location pair for each alert region                                                                             |
 
 ---
 
