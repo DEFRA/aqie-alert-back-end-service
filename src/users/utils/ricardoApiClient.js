@@ -449,14 +449,7 @@ export async function getAccessToken() {
   return token
 }
 
-export async function fetchAlerts(options = {}) {
-  if (config.get('ricardoApi.useMock')) {
-    logger.info(
-      `[MOCK] Returning mock Ricardo alerts response (${MOCK_ALERTS_RESPONSE.totalItems} items)`
-    )
-    return MOCK_ALERTS_RESPONSE
-  }
-
+async function fetchAlertsFromRicardo(options = {}) {
   const token = await getAccessToken()
   const baseAlertsUrl = config.get('ricardoApi.alertsUrl')
   const { startDate, endDate } = options
@@ -498,6 +491,30 @@ export async function fetchAlerts(options = {}) {
   const data = await response.json()
   logger.info(`Fetched ${data.totalItems} alerts from Ricardo API`)
   return data
+}
+
+// TEMP (perf-test): when useMock=true we still hit the real Ricardo API to
+// generate realtime traffic, then return the mock response so downstream
+// logic has data to exercise. Revert after perf testing.
+export async function fetchAlerts(options = {}) {
+  if (config.get('ricardoApi.useMock')) {
+    try {
+      const realData = await fetchAlertsFromRicardo(options)
+      logger.info(
+        `[PERF-TEST] Real Ricardo call succeeded with ${realData.totalItems} items; returning mock response instead`
+      )
+    } catch (err) {
+      logger.warn(
+        `[PERF-TEST] Real Ricardo call failed during mock mode (continuing with mock) ${JSON.stringify({ error: err.message })}`
+      )
+    }
+    logger.info(
+      `[MOCK] Returning mock Ricardo alerts response (${MOCK_ALERTS_RESPONSE.totalItems} items)`
+    )
+    return MOCK_ALERTS_RESPONSE
+  }
+
+  return fetchAlertsFromRicardo(options)
 }
 
 export async function fetchSiteMetaData() {
