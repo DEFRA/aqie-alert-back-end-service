@@ -83,6 +83,25 @@ const MOCK_ALERTS_RESPONSE = {
       validationStatus: 2,
       date: MOCK_ALERT_DATE_ACTIVE
     },
+    		{
+      '@id': '/api/a_q_s_r_alerts/1189',
+      '@type': 'AQSRAlert',
+      id: 1113,
+      samplingPointId: 1250,
+      siteId: 'UKA00643',
+      region: 'North East Scotland',
+      pollutant: 'O<sub>3</sub> (O3)',
+      informationThreshold: null,
+      informationLevel: false,
+      alertThreshold: null,
+      alertLevel: true,
+      concentration: 240,
+      duration: null,
+      alertText: 'High ozone levels detected',
+      coverage: 'tbc',
+      validationStatus: 2,
+      date: MOCK_ALERT_DATE_ACTIVE
+    },
     {
       '@id': '/api/a_q_s_r_alerts/1189',
       '@type': 'AQSRAlert',
