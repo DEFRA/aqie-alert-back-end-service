@@ -38,12 +38,12 @@ const MOCK_ALERTS_RESPONSE = {
       informationLevel: false,
       alertThreshold: null,
       alertLevel: true,
-      concentration: 168,
+      concentration: 240,
       duration: null,
       alertText: 'High ozone levels detected',
       coverage: 'tbc',
       validationStatus: 2,
-      date: MOCK_ALERT_DATE_ACTIVE
+      date:'2026-05-15T16:00:00+01:00'
     },
 		{
       '@id': '/api/a_q_s_r_alerts/1189',
