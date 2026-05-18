@@ -32,7 +32,7 @@ const MOCK_ALERTS_RESPONSE = {
       '@id': '/api/a_q_s_r_alerts/1187',
       '@type': 'AQSRAlert',
       id: 1187,
-      samplingPointId: 1238,
+      samplingPointId: 1239,
       siteId: 'UKA00462',
       region: 'Yorkshire & Humber',
       pollutant: 'O<sub>3</sub> (O3)',
@@ -45,7 +45,7 @@ const MOCK_ALERTS_RESPONSE = {
       alertText: 'High ozone levels detected',
       coverage: 'tbc',
       validationStatus: 2,
-      date: '2026-05-15T16:00:00+01:00'
+      date: '2026-05-18T12:00:00+01:00'
     },
     {
       '@id': '/api/a_q_s_r_alerts/1189',
