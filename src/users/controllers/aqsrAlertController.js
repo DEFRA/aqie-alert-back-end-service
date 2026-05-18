@@ -14,6 +14,15 @@ const logger = createLogger()
 const LOG_PREFIX = '[AQSRAlert]'
 const TWENTY_FOUR_HOURS_MS = 24 * 60 * 60 * 1000
 
+// en-CA locale formats as YYYY-MM-DD; timeZone pins it to UK local date
+// regardless of host timezone, so BST/GMT shifts are handled correctly.
+const UK_DATE_FORMATTER = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'Europe/London',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit'
+})
+
 function isWithinLast24Hours(dateString) {
   const alertDate = new Date(dateString)
   if (!Number.isFinite(alertDate.getTime())) {
@@ -43,7 +52,7 @@ async function fetchRicardoAlerts(requestId, options = {}) {
     return await fetchAlerts(options)
   } catch (err) {
     logger.error(
-      `${LOG_PREFIX} Ricardo API call failed ${JSON.stringify({ requestId, error: err.message })}`
+      `${LOG_PREFIX} Ricardo API call failed ${JSON.stringify({ requestId, upstreamStatus: err.status ?? null, error: err.message })}`
     )
     return null
   }
@@ -78,7 +87,15 @@ async function handleCurrentDayMode(request, h) {
     return h.response([]).code(STATUS_OK)
   }
 
-  const alertData = await fetchRicardoAlerts(requestId)
+  // Narrow the Ricardo query to yesterday + today (UK local date) so the
+  // response stays small; the isWithinLast24Hours filter below then trims it
+  // to the precise window.
+  const now = new Date()
+  const endDate = UK_DATE_FORMATTER.format(now)
+  const startDate = UK_DATE_FORMATTER.format(
+    new Date(now.getTime() - TWENTY_FOUR_HOURS_MS)
+  )
+  const alertData = await fetchRicardoAlerts(requestId, { startDate, endDate })
   if (!alertData) {
     return Boom.badGateway('Air quality alert service temporarily unavailable')
   }

@@ -135,17 +135,27 @@ describe('aqsrAlertController', () => {
       expect(result.output.statusCode).toBe(502)
     })
 
-    it('should fetch Ricardo without date params in current-day mode', async () => {
-      mockFindRegion.mockReturnValue(REGION)
-      mockGetSiteIdsForRegion.mockReturnValue([SITE_ID_1])
-      mockFetchAlerts.mockResolvedValue({ member: [] })
+    it('should fetch Ricardo with yesterday/today date range in current-day mode', async () => {
+      vi.useFakeTimers()
+      vi.setSystemTime(new Date('2026-05-15T12:00:00Z'))
 
-      await aqsrAlertHandler(
-        makeRequest({ lat: 53.8, long: -1.5, currentDay: true }),
-        mockH
-      )
+      try {
+        mockFindRegion.mockReturnValue(REGION)
+        mockGetSiteIdsForRegion.mockReturnValue([SITE_ID_1])
+        mockFetchAlerts.mockResolvedValue({ member: [] })
 
-      expect(mockFetchAlerts).toHaveBeenCalledWith({})
+        await aqsrAlertHandler(
+          makeRequest({ lat: 53.8, long: -1.5, currentDay: true }),
+          mockH
+        )
+
+        expect(mockFetchAlerts).toHaveBeenCalledWith({
+          startDate: '2026-05-14',
+          endDate: '2026-05-15'
+        })
+      } finally {
+        vi.useRealTimers()
+      }
     })
 
     it('should return active alert entries when all three conditions pass', async () => {

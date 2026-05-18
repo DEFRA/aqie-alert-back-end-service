@@ -15,7 +15,7 @@ async function refreshCache() {
     siteData = await fetchSiteMetaData()
   } catch (err) {
     logger.error(
-      `[SiteCache] Failed to fetch site metadata ${JSON.stringify({ error: err.message })}`
+      `[SiteCache] Failed to fetch site metadata ${JSON.stringify({ upstreamStatus: err.status ?? null, error: err.message })}`
     )
     return
   }

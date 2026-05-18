@@ -2,6 +2,7 @@ import { fetchForecast } from './forecastApiClient.js'
 import { sendNotification } from './notifyServiceClient.js'
 import { findRegion } from './regionFinder.js'
 import { maskPhoneNumber, maskEmail } from './maskingUtils.js'
+import { formatLocationForUrl } from './locationUtils.js'
 import { config } from '../../config.js'
 import { createLogger } from '../../common/helpers/logging/logger.js'
 import { DB_ERROR_CODE } from './constants.js'
@@ -62,24 +63,6 @@ function groupAlertsByRegion(alertIdentifiedArray) {
  */
 function getDaqiLabel() {
   return 'high'
-}
-
-/**
- * Formats a location name into a URL slug for the checkAirQualityLink.
- * Matches the same logic used in pollutantAlertProcessor.
- */
-function formatLocationForUrl(location) {
-  if (!location) {
-    return ''
-  }
-  const trimmed = location.trim()
-  if (trimmed.includes(',')) {
-    return trimmed
-      .split(',')
-      .map((part) => part.trim().toLowerCase().replaceAll(/\s+/g, '-'))
-      .join('_')
-  }
-  return trimmed.toLowerCase().replaceAll(/\s+/g, '')
 }
 
 /**

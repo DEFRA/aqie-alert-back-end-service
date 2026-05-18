@@ -204,8 +204,8 @@ GET /aqsr-alert?current-day=true&lat=51.4818&long=-3.1763
 
 1. `lat`/`long` are resolved to a UK region via the 3-step GeoJSON boundary lookup (polygon → bounding-box → nearest centroid)
 2. All monitoring site IDs for that region are retrieved from the in-memory site-region cache
-3. The Ricardo AQSR alerts feed is fetched (or returned from mock when `RICARDO_API_USE_MOCK=true`)
-4. Alerts are filtered to those where the site ID matches the region's sites, the alert is confirmed (`alertLevel=true` or `informationLevel=true`), and the date is within the last 24 hours
+3. The Ricardo AQSR alerts feed is fetched with `start-date` = yesterday's UK-local date (`Europe/London`) and `end-date` = today's UK-local date (both `yyyy-mm-dd`), narrowing the upstream response to the rolling 24-hour window. When `RICARDO_API_USE_MOCK=true`, the mock response is returned to the caller after the real call is logged.
+4. Alerts are filtered to those where the site ID matches the region's sites, the alert is confirmed (`alertLevel=true` or `informationLevel=true`), and the date is within the last 24 hours (precise millisecond check)
 
 ---
 
