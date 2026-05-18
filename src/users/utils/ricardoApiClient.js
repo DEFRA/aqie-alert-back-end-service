@@ -33,7 +33,7 @@ const MOCK_ALERTS_RESPONSE = {
       '@type': 'AQSRAlert',
       id: 1187,
       samplingPointId: 1239,
-      siteId: 'UKA00462',
+      siteId: 'UKA00524',
       region: 'Yorkshire & Humber',
       pollutant: 'O<sub>3</sub> (O3)',
       informationThreshold: null,
