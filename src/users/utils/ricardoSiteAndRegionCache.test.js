@@ -441,7 +441,7 @@ describe('ricardoSiteAndRegionCache', () => {
       await vi.advanceTimersByTimeAsync(TTL_24H_MS)
 
       expect(mockLogger.error).toHaveBeenCalledWith(
-        `[SiteCache] Failed to fetch site metadata ${JSON.stringify({ error: 'Network timeout' })}`
+        `[SiteCache] Failed to fetch site metadata ${JSON.stringify({ upstreamStatus: null, error: 'Network timeout' })}`
       )
     })
 

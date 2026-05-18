@@ -1,6 +1,7 @@
 import { fetchAlerts } from './ricardoApiClient.js'
 import { sendNotification } from './notifyServiceClient.js'
 import { getRegionForSite } from './ricardoSiteAndRegionCache.js'
+import { formatLocationForUrl } from './locationUtils.js'
 import { config } from '../../config.js'
 import { createLogger } from '../../common/helpers/logging/logger.js'
 
@@ -159,20 +160,6 @@ async function markAlertProcessed(db, alertId) {
   )
 }
 
-function formatLocationForUrl(location) {
-  if (!location) {
-    return ''
-  }
-  const trimmed = location.trim()
-  if (trimmed.includes(',')) {
-    return trimmed
-      .split(',')
-      .map((part) => part.trim().toLowerCase().replaceAll(/\s+/g, '-'))
-      .join('_')
-  }
-  return trimmed.toLowerCase().replaceAll(/\s+/g, '')
-}
-
 function getMatchingUsers(users, alertRegion) {
   return users.flatMap((user) =>
     (user.locations ?? [])
@@ -304,7 +291,7 @@ export async function processPollutantAlerts(db) {
     alertData = await fetchAlerts()
   } catch (err) {
     logger.error(
-      `[Pollutant] Failed to fetch Ricardo alerts ${JSON.stringify({ error: err.message })}`
+      `[Pollutant] Failed to fetch Ricardo alerts ${JSON.stringify({ upstreamStatus: err.status ?? null, error: err.message })}`
     )
     return
   }
@@ -352,7 +339,6 @@ export {
   getMatchingUsers,
   cleanPollutantName,
   formatPollutantName,
-  formatLocationForUrl,
   getAlreadyProcessedAlertIds,
   markAlertInProgress,
   markAlertProcessed,

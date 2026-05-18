@@ -4,7 +4,6 @@ import {
   getMatchingUsers,
   cleanPollutantName,
   formatPollutantName,
-  formatLocationForUrl,
   sendAlertToUser,
   processPollutantAlerts
 } from './pollutantAlertProcessor.js'
@@ -194,37 +193,6 @@ describe('pollutantAlertProcessor', () => {
         }
       ]
       expect(filterValidAlerts(members)).toHaveLength(0)
-    })
-  })
-
-  describe('formatLocationForUrl', () => {
-    it('should convert comma-separated location to slug', () => {
-      expect(formatLocationForUrl('Reading, Reading')).toBe('reading_reading')
-    })
-
-    it('should handle multi-word parts with hyphens', () => {
-      expect(formatLocationForUrl('Bristol, City of Bristol')).toBe(
-        'bristol_city-of-bristol'
-      )
-      expect(formatLocationForUrl('Stockland Bristol, Somerset')).toBe(
-        'stockland-bristol_somerset'
-      )
-      expect(formatLocationForUrl('Bristol Airport, North Somerset')).toBe(
-        'bristol-airport_north-somerset'
-      )
-    })
-
-    it('should handle postcodes by removing spaces and lowercasing', () => {
-      expect(formatLocationForUrl('tw183ht')).toBe('tw183ht')
-      expect(formatLocationForUrl('TW183HT')).toBe('tw183ht')
-      expect(formatLocationForUrl('TW18 3HT')).toBe('tw183ht')
-      expect(formatLocationForUrl('tw18 3ht')).toBe('tw183ht')
-    })
-
-    it('should return empty string for falsy input', () => {
-      expect(formatLocationForUrl('')).toBe('')
-      expect(formatLocationForUrl(null)).toBe('')
-      expect(formatLocationForUrl(undefined)).toBe('')
     })
   })
 

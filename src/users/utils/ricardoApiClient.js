@@ -11,6 +11,8 @@ const RICARDO_REQUEST_TIMEOUT_MS = 30_000
 // Mock alert data — used when RICARDO_API_USE_MOCK=true.
 // Only fetchAlerts is mocked. getAccessToken and fetchSiteMetaData always call
 // the real Ricardo API so the site-region cache is populated with live data.
+// Note: query params (start-date / end-date) are ignored — all 18 alerts are
+// returned every call. For date-filter behaviour, run against the real API.
 // ---------------------------------------------------------------------------
 const MOCK_ALERT_DATE_ACTIVE = new Date(
   Date.now() - 2 * 60 * 60 * 1000
@@ -43,9 +45,9 @@ const MOCK_ALERTS_RESPONSE = {
       alertText: 'High ozone levels detected',
       coverage: 'tbc',
       validationStatus: 2,
-      date:'2026-05-15T16:00:00+01:00'
+      date: '2026-05-15T16:00:00+01:00'
     },
-		{
+    {
       '@id': '/api/a_q_s_r_alerts/1189',
       '@type': 'AQSRAlert',
       id: 1113,
@@ -443,18 +445,16 @@ export async function getAccessToken() {
     logger.error(
       `Ricardo API login failed ${JSON.stringify({ status: response.status, errorText })}`
     )
-    throw new Error(
+    const err = new Error(
       `Ricardo API login failed: ${response.status} - ${errorText}`
     )
+    err.status = response.status
+    err.body = errorText
+    throw err
   }
 
   const data = await response.json()
   const token = data.token
-
-  logger.info(
-    `Ricardo API login response keys: ${Object.keys(data).join(', ')}`
-  )
-
   if (!token) {
     logger.error(
       `Ricardo API login succeeded but no token found in response. Available keys: ${Object.keys(data).join(', ')}`
@@ -502,9 +502,12 @@ async function fetchAlertsFromRicardo(options = {}) {
     logger.error(
       `Ricardo API alerts fetch failed ${JSON.stringify({ status: response.status, errorText })}`
     )
-    throw new Error(
+    const err = new Error(
       `Ricardo API alerts fetch failed: ${response.status} - ${errorText}`
     )
+    err.status = response.status
+    err.body = errorText
+    throw err
   }
 
   const data = await response.json()
@@ -512,9 +515,10 @@ async function fetchAlertsFromRicardo(options = {}) {
   return data
 }
 
-// TEMP (perf-test): when useMock=true we still hit the real Ricardo API to
-// generate realtime traffic, then return the mock response so downstream
-// logic has data to exercise. Revert after perf testing.
+// When useMock=true, the real Ricardo API is still called so live traffic
+// is generated against it (for perf measurement); the mock response is then
+// returned to the caller so downstream logic has deterministic data to work
+// with. When useMock=false, the real Ricardo response is returned directly.
 export async function fetchAlerts(options = {}) {
   if (config.get('ricardoApi.useMock')) {
     try {
@@ -565,9 +569,12 @@ export async function fetchSiteMetaData() {
     logger.error(
       `Ricardo API site metadata fetch failed ${JSON.stringify({ status: response.status, errorText })}`
     )
-    throw new Error(
+    const err = new Error(
       `Ricardo API site metadata fetch failed: ${response.status} - ${errorText}`
     )
+    err.status = response.status
+    err.body = errorText
+    throw err
   }
 
   const data = await response.json()

@@ -49,10 +49,11 @@ Handles all HTTP communication with the Ricardo API.
 - Returns the JWT `token` from the response body
 - Throws on non-2xx response
 
-**`fetchAlerts()`**
+**`fetchAlerts(options = {})`**
 
 - Calls `getAccessToken()` to get a fresh token on every invocation
 - `GET` to `RICARDO_API_ALERTS_URL` with `Authorization: Bearer <token>`
+- Accepts optional `{ startDate, endDate }` — when both are present, appends `?start-date=YYYY-MM-DD&end-date=YYYY-MM-DD` to the URL (used by `GET /aqsr-alert` current-day mode to narrow the window; the pollutant scheduler calls with no args)
 - Returns the full response body `{ "@context", "@id", "@type", "totalItems", "member": [...] }`
 - Throws on non-2xx response
 - Supports mock mode via `RICARDO_API_USE_MOCK=true` for local testing
@@ -66,9 +67,27 @@ Handles all HTTP communication with the Ricardo API.
 - **Always calls the real Ricardo API** — never mocked, even when `RICARDO_API_USE_MOCK=true`
 - Called at server startup (and every 24 hours) by `ricardoSiteAndRegionCache.js`
 
+**Mock-mode behaviour (`RICARDO_API_USE_MOCK=true`)**
+
+- Only `fetchAlerts` is mocked. `getAccessToken` and `fetchSiteMetaData` always call the real Ricardo API.
+- Within `fetchAlerts`, the real Ricardo API is **still called** alongside the mock — the real response is logged (success or failure) and discarded; the mock is then returned to the caller. This keeps live perf traffic flowing against Ricardo while downstream code receives deterministic data.
+- The mock **ignores `start-date` / `end-date` query params** — it returns the full set of 18 alerts every call. Real Ricardo response shape is what determines date-range behaviour.
+
 **Request timeouts**
 
 All three functions (`getAccessToken`, `fetchAlerts`, `fetchSiteMetaData`) pass `signal: AbortSignal.timeout(30_000)` to every `fetch` call. Without this, `undici` has no default timeout and a hung Ricardo API would block the `onPreStart` lifecycle hook indefinitely, preventing the server from starting and the schedulers from running.
+
+**Structured error info on thrown errors**
+
+When Ricardo returns a non-2xx response, the thrown `Error` carries the upstream HTTP status and response body as additional properties so callers can log them as structured fields:
+
+```js
+err.message // "Ricardo API alerts fetch failed: 503 - Service Unavailable"
+err.status // 503
+err.body // "Service Unavailable"
+```
+
+For network failures (timeout, DNS, connection refused) `err.status` is `undefined` — the caller logs `upstreamStatus: null` in that case so the absence of a Ricardo HTTP response is distinguishable from a real HTTP error.
 
 ---
 
@@ -469,6 +488,20 @@ The `templateId` is resolved based on `alertType` and `lang` from the USERS docu
 }
 ```
 
+### `checkAirQualityLink` slug rules
+
+The URL path segment is built by `formatLocationForUrl(location)` from `src/users/utils/locationUtils.js` (shared with the forecast scheduler). Rules:
+
+| Input location                | Resulting slug               | Notes                                                                                                                                       |
+| ----------------------------- | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `N8 7GE, Hornsey`             | `n87ge`                      | First part is a UK postcode → use postcode alone (lowercased, spaces stripped); locality is dropped to match the front-end's postcode route |
+| `TW18 3HT, Egham`             | `tw183ht`                    | Same — postcode-prefixed                                                                                                                    |
+| `London, City of Westminster` | `london_city-of-westminster` | First part is not a postcode → both parts slugged with `-`, joined with `_`                                                                 |
+| `London Apprentice, Cornwall` | `london-apprentice_cornwall` | Same — non-postcode                                                                                                                         |
+| `TW18 3HT` (no comma)         | `tw183ht`                    | Single token → lowercased, spaces stripped                                                                                                  |
+
+Postcode detection is case-insensitive and accepts the postcode with or without an internal space (`N8 7GE` and `N87GE` both detect). All four UK nations are covered (`BT` Northern Ireland, `EH`/`G`/`AB` Scotland, `CF`/`LL`/`SA` Wales, plus all England formats and Crown Dependencies).
+
 ---
 
 ## Multi-Location Behaviour
@@ -547,13 +580,13 @@ Scheduler       RicardoApiClient     MongoDB                   NotifyService
 
 ## Error Handling Summary
 
-| Failure point                       | Behaviour                                                                                                                         |
-| ----------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `GET /aqsr_alerts` throws           | Logs error, cycle stops, next run at next cron tick                                                                               |
-| No valid alerts after filter        | Logs info, cycle stops                                                                                                            |
-| All alerts already processed        | Logs info, cycle stops immediately                                                                                                |
-| Individual notification fails       | Logs error, audit entry stays `not-processed`, `allSent` set to false — `pollutant-alert-processing-state` not marked processed   |
-| Duplicate audit insert (code 11000) | Logs warning, skips insert, continues                                                                                             |
-| Service restarts between ticks      | Immediate startup run catches any unprocessed alerts; `pollutant-alert-processing-state` prevents re-processing already-sent ones |
+| Failure point                       | Behaviour                                                                                                                                            |
+| ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /aqsr_alerts` throws           | Logs error with structured `upstreamStatus` field (HTTP status from Ricardo, or `null` for network/timeout). Cycle stops, next run at next cron tick |
+| No valid alerts after filter        | Logs info, cycle stops                                                                                                                               |
+| All alerts already processed        | Logs info, cycle stops immediately                                                                                                                   |
+| Individual notification fails       | Logs error, audit entry stays `not-processed`, `allSent` set to false — `pollutant-alert-processing-state` not marked processed                      |
+| Duplicate audit insert (code 11000) | Logs warning, skips insert, continues                                                                                                                |
+| Service restarts between ticks      | Immediate startup run catches any unprocessed alerts; `pollutant-alert-processing-state` prevents re-processing already-sent ones                    |
 
 Failed `not-processed` entries in `pollutant-alerts-audit` are the evidence trail for manual investigation. No automatic retry is performed.
