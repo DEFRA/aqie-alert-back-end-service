@@ -230,12 +230,13 @@ GET /aqsr-alert?start-date=2026-05-01&end-date=2026-05-08
 
 ### Response (both modes)
 
-**200 OK** — array of alert objects (empty array when no alerts match):
+**200 OK** — array of alert objects (empty array when no alerts match). Records are **always sorted by `alert-started` in descending order (newest first)** regardless of the order Ricardo returns them, so the front-end can reliably show the latest breach at the top of the results page.
 
 ```json
 [
   {
     "active-breaches": true,
+    "sampling-id": 1187,
     "pollutant-name": "ozone (O3)",
     "monitoring-station-name": "Cardiff Centre",
     "region": "South East Wales",
@@ -246,13 +247,14 @@ GET /aqsr-alert?start-date=2026-05-01&end-date=2026-05-08
 
 **Response fields:**
 
-| Field                     | Type           | Description                                                                       |
-| ------------------------- | -------------- | --------------------------------------------------------------------------------- |
-| `active-breaches`         | boolean        | `true` if the alert date is within the last 24 hours; `false` for historical ones |
-| `pollutant-name`          | string         | Human-readable pollutant name e.g. `"ozone (O3)"`, `"nitrogen dioxide (NO2)"`     |
-| `monitoring-station-name` | string \| null | Name of the monitoring station from Ricardo site metadata; `null` if not cached   |
-| `region`                  | string \| null | Region resolved from the site's coordinates; `null` if not in cache               |
-| `alert-started`           | string         | ISO 8601 timestamp when the alert was recorded by Ricardo                         |
+| Field                     | Type           | Description                                                                                                          |
+| ------------------------- | -------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `active-breaches`         | boolean        | `true` if the alert date is within the last 24 hours; `false` for historical ones                                    |
+| `sampling-id`             | number \| null | Ricardo `samplingPointId` for the monitoring point that recorded the breach; `null` if absent in the upstream record |
+| `pollutant-name`          | string         | Human-readable pollutant name e.g. `"ozone (O3)"`, `"nitrogen dioxide (NO2)"`                                        |
+| `monitoring-station-name` | string \| null | Name of the monitoring station from Ricardo site metadata; `null` if not cached                                      |
+| `region`                  | string \| null | Region resolved from the site's coordinates; `null` if not in cache                                                  |
+| `alert-started`           | string         | ISO 8601 timestamp when the alert was recorded by Ricardo                                                            |
 
 **Validation errors (400):**
 
