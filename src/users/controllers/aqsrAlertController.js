@@ -36,6 +36,7 @@ function buildAlertEntry(alert) {
   const siteInfo = getSiteInfo(alert.siteId)
   return {
     'active-breaches': isWithinLast24Hours(alert.date),
+    'sampling-id': alert.samplingPointId ?? null,
     'pollutant-name': formatPollutantName(alert.pollutant),
     'monitoring-station-name': siteInfo?.monitoringStationName ?? null,
     region: siteInfo?.region ?? null,
@@ -45,6 +46,14 @@ function buildAlertEntry(alert) {
 
 function isBreachConfirmed(alert) {
   return alert.alertLevel === true || alert.informationLevel === true
+}
+
+// Lock response order to newest-first regardless of Ricardo's sort behaviour,
+// so the front-end can rely on "latest at the top of the results page".
+function sortByDateDesc(alerts) {
+  return alerts.sort(
+    (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
+  )
 }
 
 async function fetchRicardoAlerts(requestId, options = {}) {
@@ -116,7 +125,9 @@ async function handleCurrentDayMode(request, h) {
     `${LOG_PREFIX} current-day mode: ${activeAlerts.length} active alert(s) within 24h for region "${region}" ${JSON.stringify({ requestId })}`
   )
 
-  return h.response(activeAlerts.map(buildAlertEntry)).code(STATUS_OK)
+  return h
+    .response(sortByDateDesc(activeAlerts).map(buildAlertEntry))
+    .code(STATUS_OK)
 }
 
 // Mode 2: global — no location filter, returns all breach records from Ricardo for the period
@@ -139,7 +150,9 @@ async function handleDateRangeMode(request, h) {
     `${LOG_PREFIX} date-range mode: ${breachAlerts.length} breach alert(s) for period ${JSON.stringify({ requestId, startDate, endDate })}`
   )
 
-  return h.response(breachAlerts.map(buildAlertEntry)).code(STATUS_OK)
+  return h
+    .response(sortByDateDesc(breachAlerts).map(buildAlertEntry))
+    .code(STATUS_OK)
 }
 
 export async function aqsrAlertHandler(request, h) {

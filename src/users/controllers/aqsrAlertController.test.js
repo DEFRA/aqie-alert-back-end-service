@@ -48,6 +48,7 @@ const oldDate = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString()
 function makeAlert(overrides = {}) {
   return {
     siteId: SITE_ID_1,
+    samplingPointId: 1187,
     pollutant: 'O<sub>3</sub> (O3)',
     alertLevel: true,
     informationLevel: false,
@@ -162,7 +163,13 @@ describe('aqsrAlertController', () => {
       mockFindRegion.mockReturnValue(REGION)
       mockGetSiteIdsForRegion.mockReturnValue([SITE_ID_1])
       mockFetchAlerts.mockResolvedValue({
-        member: [makeAlert({ siteId: SITE_ID_1, date: recentDate })]
+        member: [
+          makeAlert({
+            siteId: SITE_ID_1,
+            samplingPointId: 1187,
+            date: recentDate
+          })
+        ]
       })
 
       await aqsrAlertHandler(
@@ -173,9 +180,32 @@ describe('aqsrAlertController', () => {
       const responseArg = mockH.response.mock.calls[0][0]
       expect(responseArg).toHaveLength(1)
       expect(responseArg[0]['active-breaches']).toBe(true)
+      expect(responseArg[0]['sampling-id']).toBe(1187)
       expect(responseArg[0].region).toBe(REGION)
       expect(responseArg[0]['monitoring-station-name']).toBe('Leeds Centre')
       expect(responseArg[0]['alert-started']).toBe(recentDate)
+    })
+
+    it('should set sampling-id to null when samplingPointId is missing from Ricardo response', async () => {
+      mockFindRegion.mockReturnValue(REGION)
+      mockGetSiteIdsForRegion.mockReturnValue([SITE_ID_1])
+      mockFetchAlerts.mockResolvedValue({
+        member: [
+          makeAlert({
+            siteId: SITE_ID_1,
+            samplingPointId: undefined,
+            date: recentDate
+          })
+        ]
+      })
+
+      await aqsrAlertHandler(
+        makeRequest({ lat: 53.8, long: -1.5, currentDay: true }),
+        mockH
+      )
+
+      const responseArg = mockH.response.mock.calls[0][0]
+      expect(responseArg[0]['sampling-id']).toBeNull()
     })
 
     it('should return multiple entries when multiple alerts pass', async () => {
@@ -289,6 +319,38 @@ describe('aqsrAlertController', () => {
 
       expect(mockH.response).toHaveBeenCalledWith([])
     })
+
+    it('should return entries sorted by date descending (newest first)', async () => {
+      const oneHourAgo = new Date(Date.now() - 1 * 60 * 60 * 1000).toISOString()
+      const fiveHoursAgo = new Date(
+        Date.now() - 5 * 60 * 60 * 1000
+      ).toISOString()
+      const twentyHoursAgo = new Date(
+        Date.now() - 20 * 60 * 60 * 1000
+      ).toISOString()
+
+      mockFindRegion.mockReturnValue(REGION)
+      mockGetSiteIdsForRegion.mockReturnValue([SITE_ID_1])
+      // Ricardo returns out-of-order to prove our sort kicks in
+      mockFetchAlerts.mockResolvedValue({
+        member: [
+          makeAlert({ siteId: SITE_ID_1, date: fiveHoursAgo }),
+          makeAlert({ siteId: SITE_ID_1, date: oneHourAgo }),
+          makeAlert({ siteId: SITE_ID_1, date: twentyHoursAgo })
+        ]
+      })
+
+      await aqsrAlertHandler(
+        makeRequest({ lat: 53.8, long: -1.5, currentDay: true }),
+        mockH
+      )
+
+      const responseArg = mockH.response.mock.calls[0][0]
+      expect(responseArg).toHaveLength(3)
+      expect(responseArg[0]['alert-started']).toBe(oneHourAgo)
+      expect(responseArg[1]['alert-started']).toBe(fiveHoursAgo)
+      expect(responseArg[2]['alert-started']).toBe(twentyHoursAgo)
+    })
   })
 
   describe('Mode 2 — startDate + endDate', () => {
@@ -331,7 +393,13 @@ describe('aqsrAlertController', () => {
 
     it('should set active-breaches: true for alert within last 24h', async () => {
       mockFetchAlerts.mockResolvedValue({
-        member: [makeAlert({ siteId: SITE_ID_1, date: recentDate })]
+        member: [
+          makeAlert({
+            siteId: SITE_ID_1,
+            samplingPointId: 2345,
+            date: recentDate
+          })
+        ]
       })
 
       await aqsrAlertHandler(
@@ -342,6 +410,7 @@ describe('aqsrAlertController', () => {
       const responseArg = mockH.response.mock.calls[0][0]
       expect(responseArg).toHaveLength(1)
       expect(responseArg[0]['active-breaches']).toBe(true)
+      expect(responseArg[0]['sampling-id']).toBe(2345)
     })
 
     it('should set active-breaches: false for alert older than 24h', async () => {
@@ -376,6 +445,32 @@ describe('aqsrAlertController', () => {
       expect(responseArg).toHaveLength(2)
       expect(responseArg[0]['active-breaches']).toBe(true)
       expect(responseArg[1]['active-breaches']).toBe(false)
+    })
+
+    it('should return entries sorted by date descending regardless of Ricardo order', async () => {
+      const newest = '2025-08-13T17:00:00+01:00'
+      const middle = '2025-07-11T19:00:00+01:00'
+      const oldest = '2025-06-19T16:00:00+01:00'
+
+      // Ricardo returns out-of-order to prove our sort kicks in
+      mockFetchAlerts.mockResolvedValue({
+        member: [
+          makeAlert({ siteId: SITE_ID_1, date: middle }),
+          makeAlert({ siteId: SITE_ID_2, date: oldest }),
+          makeAlert({ siteId: SITE_ID_1, date: newest })
+        ]
+      })
+
+      await aqsrAlertHandler(
+        makeRequest({ startDate: '2024-12-01', endDate: '2025-08-13' }),
+        mockH
+      )
+
+      const responseArg = mockH.response.mock.calls[0][0]
+      expect(responseArg).toHaveLength(3)
+      expect(responseArg[0]['alert-started']).toBe(newest)
+      expect(responseArg[1]['alert-started']).toBe(middle)
+      expect(responseArg[2]['alert-started']).toBe(oldest)
     })
 
     it('should exclude alerts where breach is not confirmed', async () => {
