@@ -14,9 +14,9 @@ const RICARDO_REQUEST_TIMEOUT_MS = 30_000
 // Note: query params (start-date / end-date) are ignored — all 18 alerts are
 // returned every call. For date-filter behaviour, run against the real API.
 // ---------------------------------------------------------------------------
-const MOCK_ALERT_DATE_ACTIVE = new Date(
-  Date.now() - 2 * 60 * 60 * 1000
-).toISOString()
+// const MOCK_ALERT_DATE_ACTIVE = new Date(
+//   Date.now() - 2 * 60 * 60 * 1000
+// ).toISOString()
 const MOCK_ALERT_DATE_PAST = new Date(
   Date.now() - 48 * 60 * 60 * 1000
 ).toISOString()
@@ -47,7 +47,7 @@ const MOCK_ALERTS_RESPONSE = {
       validationStatus: 2,
       date: '2026-05-20T06:00:00+01:00'
     },
-	{
+    {
       '@id': '/api/a_q_s_r_alerts/1187',
       '@type': 'AQSRAlert',
       id: 1187,
@@ -66,7 +66,7 @@ const MOCK_ALERTS_RESPONSE = {
       validationStatus: 2,
       date: '2026-05-20T07:00:00+01:00'
     },
-	{
+    {
       '@id': '/api/a_q_s_r_alerts/1187',
       '@type': 'AQSRAlert',
       id: 1187,
@@ -85,11 +85,11 @@ const MOCK_ALERTS_RESPONSE = {
       validationStatus: 2,
       date: '2026-05-20T07:00:00+01:00'
     },
-	{
+    {
       '@id': '/api/a_q_s_r_alerts/1204',
       '@type': 'AQSRAlert',
       id: 1204,
-      samplingPointId: 01234,
+      samplingPointId: 12340,
       siteId: 'UKA00212',
       region: 'Northern Ireland',
       pollutant: 'NO<sub>2</sub> (NO2)',
