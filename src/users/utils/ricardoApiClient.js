@@ -102,7 +102,7 @@ const MOCK_ALERTS_RESPONSE = {
       alertText: 'High nitrogen dioxide levels detected',
       coverage: 'tbc',
       validationStatus: 2,
-      date: '2026-05-20T003:00:00+01:00'
+      date: '2026-05-20T03:00:00+01:00'
     },
     // --- PAST breaches (older than 24h) ---
     {
