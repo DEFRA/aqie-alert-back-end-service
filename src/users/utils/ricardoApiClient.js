@@ -45,7 +45,7 @@ const MOCK_ALERTS_RESPONSE = {
       alertText: 'High ozone levels detected',
       coverage: 'tbc',
       validationStatus: 2,
-      date: '2026-05-18T12:00:00+01:00'
+      date: '2026-05-20T06:00:00+01:00'
     },
     {
       '@id': '/api/a_q_s_r_alerts/1187',
@@ -64,7 +64,7 @@ const MOCK_ALERTS_RESPONSE = {
       alertText: 'High nitrogen levels detected',
       coverage: 'tbc',
       validationStatus: 2,
-      date: '2026-05-18T12:00:00+01:00'
+      date: '2026-05-20T08:00:00+01:00'
     },
     {
       '@id': '/api/a_q_s_r_alerts/1189',
