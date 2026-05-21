@@ -63,7 +63,7 @@ const MOCK_ALERTS_RESPONSE = {
             "alertText": "<?xml encoding=\"utf-8\" ?><h3>Pollution Alert Warning Wed 13/08/2025 at 4pm</h3><ul><li> Ozone Public information threshold 180 &micro;g/m<sup>3</sup> breached at Glazebury (182 &micro;g/m<sup>3</sup>) on 13/08/2025 16:00 BST</li>\n\n\n</ul><p>Please see ....</p><ul>\n<li><a href=\"http://uk-air.defra.gov.uk/latest/period_plots?POL=O3&amp;days=7\">O3 data plots</a></li>\n<li><a href=\"http://uk-air.defra.gov.uk/latest/currentlevels?period=24\">Maximum 8hour running mean Ozone in the last 24 hours</a></li>\n<li><a href=\"http://uk-air.defra.gov.uk/latest/\">Latest measured index levels</a> and associated <a href=\"http://uk-air.defra.gov.uk/air-pollution/daqi\">health advice.</a></li></ul><p><b> NB - These data are provisional and are subject to change</b></p>\n",
             "coverage": "N/A",
             "validationStatus": 2,
-            "date": "2026-05-20T10:15:00+01:00"
+            "date": "2026-05-21T10:15:00+01:00"
         },
         {
             "@id": "/api/a_q_s_r_alerts/1186",
@@ -82,7 +82,7 @@ const MOCK_ALERTS_RESPONSE = {
             "alertText": "<?xml encoding=\"utf-8\" ?><h3>Pollution Alert Warning Wed 13/08/2025 at 4pm</h3><ul>\n<li> Ozone Public information threshold 180 &micro;g/m<sup>3</sup> breached at Salford Eccles (187 &micro;g/m<sup>3</sup>) on 13/08/2025 16:00 BST</li>\n\n</ul><p>Please see ....</p><ul>\n<li><a href=\"http://uk-air.defra.gov.uk/latest/period_plots?POL=O3&amp;days=7\">O3 data plots</a></li>\n<li><a href=\"http://uk-air.defra.gov.uk/latest/currentlevels?period=24\">Maximum 8hour running mean Ozone in the last 24 hours</a></li>\n<li><a href=\"http://uk-air.defra.gov.uk/latest/\">Latest measured index levels</a> and associated <a href=\"http://uk-air.defra.gov.uk/air-pollution/daqi\">health advice.</a></li></ul><p><b> NB - These data are provisional and are subject to change</b></p>\n",
             "coverage": "N/A",
             "validationStatus": 2,
-            "date": "2026-05-20T10:30:00+01:00"
+            "date": "2026-05-21T10:30:00+01:00"
         }
     ] 
 }
