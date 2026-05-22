@@ -164,7 +164,7 @@ const MOCK_ALERTS_RESPONSE = {
             "@id": "/api/a_q_s_r_alerts/1142",
             "@type": "AQSRAlert",
             "id": 1142,
-            "samplingPointId": 25,
+            "samplingPointId": 25123,
             "siteId": "UKA00012",
             "region": "Eastern",
             "pollutant": "O<sub>3</sub> (O3)",
@@ -177,7 +177,7 @@ const MOCK_ALERTS_RESPONSE = {
             "alertText": "<?xml encoding=\"utf-8\" ?><h3>Pollution Alert Warning Tue 01/07/2025 at 5pm</h3><ul><li> Ozone Public information threshold 180 &micro;g/m<sup>3</sup> breached at Sibton (194 &micro;g/m<sup>3</sup>) on 01/07/2025 17:00 BST</li>\n\n</ul><p>Please see ....</p><ul>\n<li><a href=\"http://uk-air.defra.gov.uk/latest/period_plots?POL=O3&amp;days=7\">O3 data plots</a></li>\n<li><a href=\"http://uk-air.defra.gov.uk/latest/currentlevels?period=24\">Maximum 8hour running mean Ozone in the last 24 hours</a></li>\n<li><a href=\"http://uk-air.defra.gov.uk/latest/\">Latest measured index levels</a> and associated <a href=\"http://uk-air.defra.gov.uk/air-pollution/daqi\">health advice.</a></li></ul><p><b> NB - These data are provisional and are subject to change</b></p>\n",
             "coverage": "N/A",
             "validationStatus": 2,
-            "date": "2026-05-21T04:30:00+01:00"
+            "date": "2026-05-21T04:11:00+01:00"
         },
         {
             "@id": "/api/a_q_s_r_alerts/1114",
