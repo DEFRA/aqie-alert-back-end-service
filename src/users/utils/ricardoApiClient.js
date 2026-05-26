@@ -46,7 +46,7 @@ const MOCK_ALERTS_RESPONSE = {
             "validationStatus": 2,
             "date": "2026-05-26T05:00:00+01:00"
         },
-		{
+		    {
             "@id": "/api/a_q_s_r_alerts/1187",
             "@type": "AQSRAlert",
             "id": 1187,
