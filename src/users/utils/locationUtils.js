@@ -25,7 +25,7 @@ export function isSameLocation(location1, location2) {
 
 // UK postcode: 1–2 area letters, district digit, optional district letter/digit,
 // optional space, sector digit, 2 unit letters. Case-insensitive.
-const UK_POSTCODE_REGEX = /^[A-Z]{1,2}[0-9][A-Z0-9]?\s*[0-9][A-Z]{2}$/i
+const UK_POSTCODE_REGEX = /^[A-Z]{1,2}\d[A-Z0-9]?\s*\d[A-Z]{2}$/i
 
 /**
  * Formats a location name into a URL slug for the checkAirQualityLink used in
