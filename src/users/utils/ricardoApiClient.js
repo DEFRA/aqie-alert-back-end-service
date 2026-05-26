@@ -28,7 +28,7 @@ const MOCK_ALERTS_RESPONSE = {
       '@id': '/api/a_q_s_r_alerts/1187',
       '@type': 'AQSRAlert',
       id: 1187,
-      samplingPointId: 2901,
+      samplingPointId: 3901,
       siteId: 'UKA00615',
       region: 'North Eastern Scotland ',
       pollutant: 'O<sub>3</sub> (O3)',
