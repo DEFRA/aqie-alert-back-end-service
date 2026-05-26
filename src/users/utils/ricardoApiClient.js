@@ -26,7 +26,7 @@ const MOCK_ALERTS_RESPONSE = {
   '@id': '/api/aqsr_alerts',
   '@type': 'Collection',
   totalItems: 21,
-   "member": [
+    "member": [
         {
             "@id": "/api/a_q_s_r_alerts/1187",
             "@type": "AQSRAlert",
@@ -44,7 +44,7 @@ const MOCK_ALERTS_RESPONSE = {
             "alertText": "<?xml encoding=\"utf-8\" ?><h3>Pollution Alert Warning Wed 13/08/2025 at 5pm</h3><ul><li> Ozone Public information threshold 180 &micro;g/m<sup>3</sup> breached at Salford Eccles (190 &micro;g/m<sup>3</sup>) on 13/08/2025 17:00 BST</li>\n\n</ul><p>Please see ....</p><ul>\n<li><a href=\"http://uk-air.defra.gov.uk/latest/period_plots?POL=O3&amp;days=7\">O3 data plots</a></li>\n<li><a href=\"http://uk-air.defra.gov.uk/latest/currentlevels?period=24\">Maximum 8hour running mean Ozone in the last 24 hours</a></li>\n<li><a href=\"http://uk-air.defra.gov.uk/latest/\">Latest measured index levels</a> and associated <a href=\"http://uk-air.defra.gov.uk/air-pollution/daqi\">health advice.</a></li></ul><p><b> NB - These data are provisional and are subject to change</b></p>\n",
             "coverage": "N/A",
             "validationStatus": 2,
-            "date": "2026-05-22T13:00:00+01:00"
+            "date": "2026-05-26T05:00:00+01:00"
         },
         {
             "@id": "/api/a_q_s_r_alerts/1186",
@@ -63,7 +63,7 @@ const MOCK_ALERTS_RESPONSE = {
             "alertText": "<?xml encoding=\"utf-8\" ?><h3>Pollution Alert Warning Wed 13/08/2025 at 4pm</h3><ul><li> Ozone Public information threshold 180 &micro;g/m<sup>3</sup> breached at Glazebury (182 &micro;g/m<sup>3</sup>) on 13/08/2025 16:00 BST</li>\n\n\n</ul><p>Please see ....</p><ul>\n<li><a href=\"http://uk-air.defra.gov.uk/latest/period_plots?POL=O3&amp;days=7\">O3 data plots</a></li>\n<li><a href=\"http://uk-air.defra.gov.uk/latest/currentlevels?period=24\">Maximum 8hour running mean Ozone in the last 24 hours</a></li>\n<li><a href=\"http://uk-air.defra.gov.uk/latest/\">Latest measured index levels</a> and associated <a href=\"http://uk-air.defra.gov.uk/air-pollution/daqi\">health advice.</a></li></ul><p><b> NB - These data are provisional and are subject to change</b></p>\n",
             "coverage": "N/A",
             "validationStatus": 2,
-            "date": "2026-05-22T10:00:00+01:00"
+            "date": "2026-05-26T02:00:00+01:00"
         },
         {
             "@id": "/api/a_q_s_r_alerts/1186",
@@ -82,7 +82,7 @@ const MOCK_ALERTS_RESPONSE = {
             "alertText": "<?xml encoding=\"utf-8\" ?><h3>Pollution Alert Warning Wed 13/08/2025 at 4pm</h3><ul>\n<li> Ozone Public information threshold 180 &micro;g/m<sup>3</sup> breached at Salford Eccles (187 &micro;g/m<sup>3</sup>) on 13/08/2025 16:00 BST</li>\n\n</ul><p>Please see ....</p><ul>\n<li><a href=\"http://uk-air.defra.gov.uk/latest/period_plots?POL=O3&amp;days=7\">O3 data plots</a></li>\n<li><a href=\"http://uk-air.defra.gov.uk/latest/currentlevels?period=24\">Maximum 8hour running mean Ozone in the last 24 hours</a></li>\n<li><a href=\"http://uk-air.defra.gov.uk/latest/\">Latest measured index levels</a> and associated <a href=\"http://uk-air.defra.gov.uk/air-pollution/daqi\">health advice.</a></li></ul><p><b> NB - These data are provisional and are subject to change</b></p>\n",
             "coverage": "N/A",
             "validationStatus": 2,
-            "date": "2026-05-22T12:00:00+01:00"
+            "date": "2026-05-26T07:00:00+01:00"
         },
         {
             "@id": "/api/a_q_s_r_alerts/1177",
@@ -93,7 +93,7 @@ const MOCK_ALERTS_RESPONSE = {
             "region": "South West",
             "pollutant": "O<sub>3</sub> (O3)",
             "informationThreshold": "EU ozone public information threshold of 180&micro;g/m<sup>3</sup>",
-            "informationLevel": true,
+            "informationLevel": false,
             "alertThreshold": "Ozone Alert 240&micro;g/m<sup>3</sup>",
             "alertLevel": true,
             "concentration": 184,
@@ -101,7 +101,7 @@ const MOCK_ALERTS_RESPONSE = {
             "alertText": "<?xml encoding=\"utf-8\" ?><h3>Pollution Alert Warning Tue 12/08/2025 at 6pm</h3><ul><li> Ozone Public information threshold 180 &micro;g/m<sup>3</sup> breached at Swindon Walcot (184 &micro;g/m<sup>3</sup>) on 12/08/2025 18:00 BST</li>\n\n</ul><p>Please see ....</p><ul>\n<li><a href=\"http://uk-air.defra.gov.uk/latest/period_plots?POL=O3&amp;days=7\">O3 data plots</a></li>\n<li><a href=\"http://uk-air.defra.gov.uk/latest/currentlevels?period=24\">Maximum 8hour running mean Ozone in the last 24 hours</a></li>\n<li><a href=\"http://uk-air.defra.gov.uk/latest/\">Latest measured index levels</a> and associated <a href=\"http://uk-air.defra.gov.uk/air-pollution/daqi\">health advice.</a></li></ul><p><b> NB - These data are provisional and are subject to change</b></p>\n",
             "coverage": "N/A",
             "validationStatus": 2,
-            "date": "2026-05-22T09:00:00+01:00"
+            "date": "2026-05-26T03:00:00+01:00"
         },
         {
             "@id": "/api/a_q_s_r_alerts/1156",
@@ -114,13 +114,13 @@ const MOCK_ALERTS_RESPONSE = {
             "informationThreshold": "EU ozone public information threshold of 180&micro;g/m<sup>3</sup>",
             "informationLevel": true,
             "alertThreshold": "Ozone Alert 240&micro;g/m<sup>3</sup>",
-            "alertLevel": false,
+            "alertLevel": true,
             "concentration": 184,
             "duration": null,
             "alertText": "<?xml encoding=\"utf-8\" ?><h3>Pollution Alert Warning Fri 11/07/2025 at 7pm</h3><ul><li> Ozone Public information threshold 180 &micro;g/m<sup>3</sup> breached at Leamington Spa (184 &micro;g/m<sup>3</sup>) on 11/07/2025 19:00 BST</li>\n\n</ul><p>Please see ....</p><ul>\n<li><a href=\"http://uk-air.defra.gov.uk/latest/period_plots?POL=O3&amp;days=7\">O3 data plots</a></li>\n<li><a href=\"http://uk-air.defra.gov.uk/latest/currentlevels?period=24\">Maximum 8hour running mean Ozone in the last 24 hours</a></li>\n<li><a href=\"http://uk-air.defra.gov.uk/latest/\">Latest measured index levels</a> and associated <a href=\"http://uk-air.defra.gov.uk/air-pollution/daqi\">health advice.</a></li></ul><p><b> NB - These data are provisional and are subject to change</b></p>\n",
             "coverage": "N/A",
             "validationStatus": 2,
-            "date": "2026-05-22T03:00:00+01:00"
+            "date": "2025-07-11T19:00:00+01:00"
         },
         {
             "@id": "/api/a_q_s_r_alerts/1154",
@@ -133,7 +133,7 @@ const MOCK_ALERTS_RESPONSE = {
             "informationThreshold": "EU ozone public information threshold of 180&micro;g/m<sup>3</sup>",
             "informationLevel": true,
             "alertThreshold": "Ozone Alert 240&micro;g/m<sup>3</sup>",
-            "alertLevel": false,
+            "alertLevel": true,
             "concentration": 198,
             "duration": null,
             "alertText": "<?xml encoding=\"utf-8\" ?><h3>Pollution Alert Warning Fri 11/07/2025 at 5pm</h3><ul><li> Ozone Public information threshold 180 &micro;g/m<sup>3</sup> breached at Birmingham Hall Green (198 &micro;g/m<sup>3</sup>) on 11/07/2025 17:00 BST</li>\n\n</ul><p>Please see ....</p><ul>\n<li><a href=\"http://uk-air.defra.gov.uk/latest/period_plots?POL=O3&amp;days=7\">O3 data plots</a></li>\n<li><a href=\"http://uk-air.defra.gov.uk/latest/currentlevels?period=24\">Maximum 8hour running mean Ozone in the last 24 hours</a></li>\n<li><a href=\"http://uk-air.defra.gov.uk/latest/\">Latest measured index levels</a> and associated <a href=\"http://uk-air.defra.gov.uk/air-pollution/daqi\">health advice.</a></li></ul><p><b> NB - These data are provisional and are subject to change</b></p>\n",
@@ -164,7 +164,7 @@ const MOCK_ALERTS_RESPONSE = {
             "@id": "/api/a_q_s_r_alerts/1142",
             "@type": "AQSRAlert",
             "id": 1142,
-            "samplingPointId": 25123,
+            "samplingPointId": 25,
             "siteId": "UKA00012",
             "region": "Eastern",
             "pollutant": "O<sub>3</sub> (O3)",
@@ -177,7 +177,64 @@ const MOCK_ALERTS_RESPONSE = {
             "alertText": "<?xml encoding=\"utf-8\" ?><h3>Pollution Alert Warning Tue 01/07/2025 at 5pm</h3><ul><li> Ozone Public information threshold 180 &micro;g/m<sup>3</sup> breached at Sibton (194 &micro;g/m<sup>3</sup>) on 01/07/2025 17:00 BST</li>\n\n</ul><p>Please see ....</p><ul>\n<li><a href=\"http://uk-air.defra.gov.uk/latest/period_plots?POL=O3&amp;days=7\">O3 data plots</a></li>\n<li><a href=\"http://uk-air.defra.gov.uk/latest/currentlevels?period=24\">Maximum 8hour running mean Ozone in the last 24 hours</a></li>\n<li><a href=\"http://uk-air.defra.gov.uk/latest/\">Latest measured index levels</a> and associated <a href=\"http://uk-air.defra.gov.uk/air-pollution/daqi\">health advice.</a></li></ul><p><b> NB - These data are provisional and are subject to change</b></p>\n",
             "coverage": "N/A",
             "validationStatus": 2,
-            "date": "2026-05-21T04:11:00+01:00"
+            "date": "2025-07-01T17:00:00+01:00"
+        },
+        {
+            "@id": "/api/a_q_s_r_alerts/1141",
+            "@type": "AQSRAlert",
+            "id": 1141,
+            "samplingPointId": 25,
+            "siteId": "UKA00012",
+            "region": "Eastern",
+            "pollutant": "O<sub>3</sub> (O3)",
+            "informationThreshold": "EU ozone public information threshold of 180&micro;g/m<sup>3</sup>",
+            "informationLevel": true,
+            "alertThreshold": "Ozone Alert 240&micro;g/m<sup>3</sup>",
+            "alertLevel": true,
+            "concentration": 188,
+            "duration": null,
+            "alertText": "<?xml encoding=\"utf-8\" ?><h3>Pollution Alert Warning Tue 01/07/2025 at 4pm</h3><ul><li> Ozone Public information threshold 180 &micro;g/m<sup>3</sup> breached at Sibton (188 &micro;g/m<sup>3</sup>) on 01/07/2025 16:00 BST</li>\n\n</ul><p>Please see ....</p><ul>\n<li><a href=\"http://uk-air.defra.gov.uk/latest/period_plots?POL=O3&amp;days=7\">O3 data plots</a></li>\n<li><a href=\"http://uk-air.defra.gov.uk/latest/currentlevels?period=24\">Maximum 8hour running mean Ozone in the last 24 hours</a></li>\n<li><a href=\"http://uk-air.defra.gov.uk/latest/\">Latest measured index levels</a> and associated <a href=\"http://uk-air.defra.gov.uk/air-pollution/daqi\">health advice.</a></li></ul><p><b> NB - These data are provisional and are subject to change</b></p>\n",
+            "coverage": "N/A",
+            "validationStatus": 2,
+            "date": "2025-07-01T16:00:00+01:00"
+        },
+        {
+            "@id": "/api/a_q_s_r_alerts/1140",
+            "@type": "AQSRAlert",
+            "id": 1140,
+            "samplingPointId": 25,
+            "siteId": "UKA00012",
+            "region": "Eastern",
+            "pollutant": "O<sub>3</sub> (O3)",
+            "informationThreshold": "EU ozone public information threshold of 180&micro;g/m<sup>3</sup>",
+            "informationLevel": true,
+            "alertThreshold": "Ozone Alert 240&micro;g/m<sup>3</sup>",
+            "alertLevel": true,
+            "concentration": 192,
+            "duration": null,
+            "alertText": "<?xml encoding=\"utf-8\" ?><h3>Pollution Alert Warning Tue 01/07/2025 at 3pm</h3><ul><li> Ozone Public information threshold 180 &micro;g/m<sup>3</sup> breached at Sibton (192 &micro;g/m<sup>3</sup>) on 01/07/2025 15:00 BST</li>\n\n</ul><p>Please see ....</p><ul>\n<li><a href=\"http://uk-air.defra.gov.uk/latest/period_plots?POL=O3&amp;days=7\">O3 data plots</a></li>\n<li><a href=\"http://uk-air.defra.gov.uk/latest/currentlevels?period=24\">Maximum 8hour running mean Ozone in the last 24 hours</a></li>\n<li><a href=\"http://uk-air.defra.gov.uk/latest/\">Latest measured index levels</a> and associated <a href=\"http://uk-air.defra.gov.uk/air-pollution/daqi\">health advice.</a></li></ul><p><b> NB - These data are provisional and are subject to change</b></p>\n",
+            "coverage": "N/A",
+            "validationStatus": 2,
+            "date": "2025-07-01T15:00:00+01:00"
+        },
+        {
+            "@id": "/api/a_q_s_r_alerts/1138",
+            "@type": "AQSRAlert",
+            "id": 1138,
+            "samplingPointId": 26657,
+            "siteId": "UKA00445",
+            "region": "Eastern",
+            "pollutant": "O<sub>3</sub> (O3)",
+            "informationThreshold": "EU ozone public information threshold of 180&micro;g/m<sup>3</sup>",
+            "informationLevel": true,
+            "alertThreshold": "Ozone Alert 240&micro;g/m<sup>3</sup>",
+            "alertLevel": true,
+            "concentration": 182,
+            "duration": null,
+            "alertText": "<?xml encoding=\"utf-8\" ?><h3>Pollution Alert Warning Tue 01/07/2025 at 1pm</h3><ul><li> Ozone Public information threshold 180 &micro;g/m<sup>3</sup> breached at St Osyth (182 &micro;g/m<sup>3</sup>) on 01/07/2025 13:00 BST</li>\n\n</ul><p>Please see ....</p><ul>\n<li><a href=\"http://uk-air.defra.gov.uk/latest/period_plots?POL=O3&amp;days=7\">O3 data plots</a></li>\n<li><a href=\"http://uk-air.defra.gov.uk/latest/currentlevels?period=24\">Maximum 8hour running mean Ozone in the last 24 hours</a></li>\n<li><a href=\"http://uk-air.defra.gov.uk/latest/\">Latest measured index levels</a> and associated <a href=\"http://uk-air.defra.gov.uk/air-pollution/daqi\">health advice.</a></li></ul><p><b> NB - These data are provisional and are subject to change</b></p>\n",
+            "coverage": "N/A",
+            "validationStatus": 2,
+            "date": "2025-07-01T13:00:00+01:00"
         },
         {
             "@id": "/api/a_q_s_r_alerts/1114",
@@ -228,13 +285,13 @@ const MOCK_ALERTS_RESPONSE = {
             "informationThreshold": "EU ozone public information threshold of 180&micro;g/m<sup>3</sup>",
             "informationLevel": true,
             "alertThreshold": "Ozone Alert 240&micro;g/m<sup>3</sup>",
-            "alertLevel": false,
+            "alertLevel": true,
             "concentration": 182,
             "duration": null,
             "alertText": "<?xml encoding=\"utf-8\" ?><h3>Pollution Alert Warning Thu 19/06/2025 at 7pm</h3><ul><li> Ozone Public information threshold 180 &micro;g/m<sup>3</sup> breached at Reading New Town (182 &micro;g/m<sup>3</sup>) on 19/06/2025 19:00 BST</li>\n\n</ul><p>Please see ....</p><ul>\n<li><a href=\"http://uk-air.defra.gov.uk/latest/period_plots?POL=O3&amp;days=7\">O3 data plots</a></li>\n<li><a href=\"http://uk-air.defra.gov.uk/latest/currentlevels?period=24\">Maximum 8hour running mean Ozone in the last 24 hours</a></li>\n<li><a href=\"http://uk-air.defra.gov.uk/latest/\">Latest measured index levels</a> and associated <a href=\"http://uk-air.defra.gov.uk/air-pollution/daqi\">health advice.</a></li></ul><p><b> NB - These data are provisional and are subject to change</b></p>\n",
             "coverage": "N/A",
             "validationStatus": 2,
-            "date": "2026-05-22T08:00:00+01:00"
+            "date": "2025-06-19T19:00:00+01:00"
         },
         {
             "@id": "/api/a_q_s_r_alerts/1108",
@@ -369,7 +426,7 @@ const MOCK_ALERTS_RESPONSE = {
             "validationStatus": 2,
             "date": "2025-06-19T16:00:00+01:00"
         }
-    ] 
+    ]
 }
 
 /**
