@@ -96,9 +96,9 @@ For network failures (timeout, DNS, connection refused) `err.status` is `undefin
 Core business logic. Exported functions:
 
 | Function                                  | Description                                                                                                                              |
-| ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | --- | ---------------------------------------------------------------------- |
 | `processPollutantAlerts(db)`              | **Main entry point** — orchestrates the full cycle                                                                                       |
-| `filterValidAlerts(members)`              | Filters raw API members to `alertLevel=true && validationStatus==2`, maps to alert-detail shape including `siteId`                       |
+| `filterValidAlerts(members)`              | Filters raw API members to `validationStatus==2 && (alertLevel=true                                                                      |     | informationLevel=true)`, maps to alert-detail shape including `siteId` |
 | `getMatchingUsers(users, region)`         | Returns one entry per matching user-location pair for a given region                                                                     |
 | `cleanPollutantName(pollutant)`           | Strips HTML tags from pollutant strings e.g. `O<sub>3</sub>` → `O3` — used for audit entries                                             |
 | `formatPollutantName(pollutant)`          | Strips HTML tags then maps chemical code to human-readable name e.g. `O<sub>3</sub> (O3)` → `ozone (O3)` — used in notification payloads |
@@ -130,7 +130,7 @@ If the code is unrecognised the cleaned string (HTML stripped) is returned as-is
 
 ```
 1. fetchAlerts()                     — get fresh token, fetch Ricardo API
-2. filterValidAlerts()               — keep only alertLevel=true && validationStatus==2
+2. filterValidAlerts()               — keep only validationStatus==2 && (alertLevel=true || informationLevel=true)
 3. getAlreadyProcessedAlertIds()     — load IDs from pollutant-alert-processing-state collection
 4. Exclude already-seen IDs          — deduplicate across cron cycles
 5. For each new alert:
@@ -306,7 +306,7 @@ ricardoApi
   ├── email         env: RICARDO_API_EMAIL
   ├── password      env: RICARDO_API_PASSWORD       (sensitive)
   ├── cronSchedule  env: POLLUTANT_CRON_SCHEDULE     (default: '*/30 * * * *')
-  └── useMock       env: RICARDO_API_USE_MOCK        (default: true)
+  └── useMock       env: RICARDO_API_USE_MOCK        (default: false)
 
 alertTemplates
   ├── smsAlert          env: SMS_ALERT_TEMPLATE_ID
@@ -533,7 +533,7 @@ All log statements in `pollutantAlertProcessor.js` are prefixed with `[Pollutant
 | `RICARDO_API_LOGIN_URL`      | `https://uk-air-api.staging.rcdo.co.uk/api/login_check` | No       |
 | `RICARDO_API_ALERTS_URL`     | `https://uk-air-api.staging.rcdo.co.uk/api/aqsr_alerts` | No       |
 | `POLLUTANT_CRON_SCHEDULE`    | `*/30 * * * *`                                          | No       |
-| `RICARDO_API_USE_MOCK`       | `true`                                                  | No       |
+| `RICARDO_API_USE_MOCK`       | `false`                                                 | No       |
 | `SMS_ALERT_TEMPLATE_ID`      | _(set in config)_                                       | Yes      |
 | `SMS_ALERT_CY_TEMPLATE_ID`   | _(set in config)_                                       | Yes      |
 | `EMAIL_ALERT_TEMPLATE_ID`    | _(set in config)_                                       | Yes      |
