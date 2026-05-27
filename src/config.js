@@ -137,20 +137,19 @@ const config = convict({
       smsSetUpConfirmation: {
         doc: 'SMS notification template ID',
         format: String,
-        default: '73244097-acce-4e7b-84f2-3ddcd0e70fb5',
+        default: '',
         env: 'SMS_SET_UP_CONFIRMATION_TEMPLATE_ID'
       },
       emailSetUpConfirmation: {
         doc: 'Email notification template ID',
         format: String,
-        default: '55e3e00c-0401-4f41-bf22-ecbbcf8af412',
+        default: '',
         env: 'EMAIL_SET_UP_CONFIRMATION_TEMPLATE_ID'
       },
       unsubscribeEmailLink: {
         doc: 'Unsubscribe email link (frontend URL)',
         format: String,
-        default:
-          'https://aqie-front-end.test.cdp-int.defra.cloud/notify/unsubscribe-email-link',
+        default: '',
         env: 'UNSUBSCRIBE_EMAIL_LINK'
       }
     }
@@ -171,13 +170,13 @@ const config = convict({
     email: {
       doc: 'Ricardo API login email',
       format: String,
-      default: 'maruthi.chokkanathan@cognizant.com',
+      default: '',
       env: 'RICARDO_API_EMAIL'
     },
     password: {
       doc: 'Ricardo API login password',
       format: String,
-      default: 'Mr5e7TFseqzD8Mt#',
+      default: '',
       env: 'RICARDO_API_PASSWORD',
       sensitive: true
     },
@@ -190,7 +189,7 @@ const config = convict({
     useMock: {
       doc: 'Use mock Ricardo API response instead of making real HTTP calls (for local testing)',
       format: Boolean,
-      default: true,
+      default: false,
       env: 'RICARDO_API_USE_MOCK'
     },
     siteMetaDataUrl: {
@@ -204,25 +203,25 @@ const config = convict({
     smsAlert: {
       doc: 'SMS alert template ID for pollutant alerts (English)',
       format: String,
-      default: '72e998e5-76ce-446f-9b40-a2fef9674530',
+      default: '',
       env: 'SMS_ALERT_TEMPLATE_ID'
     },
     smsAlertCy: {
       doc: 'SMS alert template ID for pollutant alerts (Welsh)',
       format: String,
-      default: '72e998e5-76ce-446f-9b40-a2fef9674530',
+      default: '',
       env: 'SMS_ALERT_CY_TEMPLATE_ID'
     },
     emailAlert: {
       doc: 'Email alert template ID for pollutant alerts (English)',
       format: String,
-      default: '725036d7-48a4-4134-a97e-cc423ffa0de0',
+      default: '',
       env: 'EMAIL_ALERT_TEMPLATE_ID'
     },
     emailAlertCy: {
       doc: 'Email alert template ID for pollutant alerts (Welsh)',
       format: String,
-      default: '725036d7-48a4-4134-a97e-cc423ffa0de0',
+      default: '',
       env: 'EMAIL_ALERT_CY_TEMPLATE_ID'
     },
     checkAirQualityLink: {
@@ -236,7 +235,7 @@ const config = convict({
     smsAlert: {
       doc: 'SMS forecast alert template ID (English)',
       format: String,
-      default: '3961db6b-a22f-4c9f-a270-0510cb3fd7f0',
+      default: '',
       env: 'SMS_FORECAST_ALERT_TEMPLATE_ID'
     },
     smsAlertCy: {
@@ -248,7 +247,7 @@ const config = convict({
     emailAlert: {
       doc: 'Email forecast alert template ID (English)',
       format: String,
-      default: 'af1ca93d-6b57-4fda-ad5e-a227fafa7770',
+      default: '',
       env: 'EMAIL_FORECAST_ALERT_TEMPLATE_ID'
     },
     emailAlertCy: {
