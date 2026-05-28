@@ -45,6 +45,13 @@ async function createIndexes(db) {
   await db.collection('example-data').createIndex({ id: 1 })
 
   await db
+    .collection('USERS')
+    .createIndex(
+      { user_contact: 1 },
+      { unique: true, name: 'user_contact_unique' }
+    )
+
+  await db
     .collection('pollutant-alert-processing-state')
     .createIndex({ 'alert-id': 1 }, { unique: true })
 
