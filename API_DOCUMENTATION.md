@@ -351,15 +351,15 @@ One document per unique `user_contact` (normalized phone number or lowercase ema
 
 ### MetOffice Forecast Alert Scheduler
 
-| Variable                              | Default                 | Description                                           |
-| ------------------------------------- | ----------------------- | ----------------------------------------------------- |
-| `FORECAST_API_URL`                    | `http://localhost:3005` | aqie-forecast-api base URL                            |
-| `DAQI_ALERT_THRESHOLD`                | `7`                     | Minimum DAQI value (inclusive) that triggers an alert |
-| `FORECAST_CRON_SCHEDULE`              | `0 6 * * *`             | Cron expression for the daily forecast alert job      |
-| `SMS_FORECAST_ALERT_TEMPLATE_ID`      | _(set in config)_       | SMS forecast alert Notify template (English)          |
-| `SMS_FORECAST_ALERT_CY_TEMPLATE_ID`   | _(set in config)_       | SMS forecast alert Notify template (Welsh)            |
-| `EMAIL_FORECAST_ALERT_TEMPLATE_ID`    | _(set in config)_       | Email forecast alert Notify template (English)        |
-| `EMAIL_FORECAST_ALERT_CY_TEMPLATE_ID` | _(set in config)_       | Email forecast alert Notify template (Welsh)          |
+| Variable                              | Default                 | Description                                                                                                                                                                                                                   |
+| ------------------------------------- | ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `FORECAST_API_URL`                    | `http://localhost:3005` | aqie-forecast-api base URL                                                                                                                                                                                                    |
+| `DAQI_ALERT_THRESHOLD`                | `7`                     | Minimum DAQI value (inclusive) that triggers an alert                                                                                                                                                                         |
+| `FORECAST_CRON_SCHEDULE`              | `0 5-10 * * *`          | Cron expression for the forecast alert job — hourly 05:00–10:00 UTC (covers 06:00–11:00 BST / 05:00–10:00 GMT). Per-day `forecast-schedule-state` guard ensures only the first tick with current forecast data does the work. |
+| `SMS_FORECAST_ALERT_TEMPLATE_ID`      | _(set in config)_       | SMS forecast alert Notify template (English)                                                                                                                                                                                  |
+| `SMS_FORECAST_ALERT_CY_TEMPLATE_ID`   | _(set in config)_       | SMS forecast alert Notify template (Welsh)                                                                                                                                                                                    |
+| `EMAIL_FORECAST_ALERT_TEMPLATE_ID`    | _(set in config)_       | Email forecast alert Notify template (English)                                                                                                                                                                                |
+| `EMAIL_FORECAST_ALERT_CY_TEMPLATE_ID` | _(set in config)_       | Email forecast alert Notify template (Welsh)                                                                                                                                                                                  |
 
 ### Logging & Proxy
 

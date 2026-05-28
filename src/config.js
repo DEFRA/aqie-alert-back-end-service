@@ -271,9 +271,9 @@ const config = convict({
       env: 'DAQI_ALERT_THRESHOLD'
     },
     cronSchedule: {
-      doc: 'Cron expression for the daily MetOffice forecast alert job (default: 6am every day)',
+      doc: 'Cron expression for the daily MetOffice forecast alert job (default: hourly 05:00–10:00 UTC — covers 06:00–11:00 BST and 05:00–10:00 GMT, with the schedule-state guard ensuring only the first tick with current data does the work)',
       format: String,
-      default: '0 6 * * *',
+      default: '0 5-10 * * *',
       env: 'FORECAST_CRON_SCHEDULE'
     }
   },

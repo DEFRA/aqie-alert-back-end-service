@@ -7,7 +7,7 @@ vi.mock('node-cron', () => ({
 vi.mock('../config.js', () => ({
   config: {
     get: vi.fn((key) => {
-      if (key === 'metOfficeForecast.cronSchedule') return '0 6 * * *'
+      if (key === 'metOfficeForecast.cronSchedule') return '0 5-10 * * *'
       return null
     })
   }
@@ -98,7 +98,10 @@ describe('forecast-alert-scheduler', () => {
     await forecastAlertScheduler.plugin.register(server)
     await eventHandlers.start()
 
-    expect(mockSchedule).toHaveBeenCalledWith('0 6 * * *', expect.any(Function))
+    expect(mockSchedule).toHaveBeenCalledWith(
+      '0 5-10 * * *',
+      expect.any(Function)
+    )
   })
 
   it('should catch and log startup run errors without throwing', async () => {
