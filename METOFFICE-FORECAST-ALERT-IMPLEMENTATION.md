@@ -468,13 +468,15 @@ Email (Welsh):
 
 The URL path segment is built by `formatLocationForUrl(location)` from `src/users/utils/locationUtils.js` (shared with the pollutant scheduler). Rules:
 
-| Input location                | Resulting slug               | Notes                                                                                                                                       |
-| ----------------------------- | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `N8 7GE, Hornsey`             | `n87ge`                      | First part is a UK postcode → use postcode alone (lowercased, spaces stripped); locality is dropped to match the front-end's postcode route |
-| `TW18 3HT, Egham`             | `tw183ht`                    | Same — postcode-prefixed                                                                                                                    |
-| `London, City of Westminster` | `london_city-of-westminster` | First part is not a postcode → both parts slugged with `-`, joined with `_`                                                                 |
-| `London Apprentice, Cornwall` | `london-apprentice_cornwall` | Same — non-postcode                                                                                                                         |
-| `TW18 3HT` (no comma)         | `tw183ht`                    | Single token → lowercased, spaces stripped                                                                                                  |
+| Input location                                              | Resulting slug                                           | Notes                                                                                                                                       |
+| ----------------------------------------------------------- | -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `N8 7GE, Hornsey`                                           | `n87ge`                                                  | First part is a UK postcode → use postcode alone (lowercased, spaces stripped); locality is dropped to match the front-end's postcode route |
+| `TW18 3HT, Egham`                                           | `tw183ht`                                                | Same — postcode-prefixed                                                                                                                    |
+| `London, City of Westminster`                               | `london_city-of-westminster`                             | First part is not a postcode → first comma becomes `_`, spaces within each part become `-`                                                  |
+| `London Apprentice, Cornwall`                               | `london-apprentice_cornwall`                             | Same — non-postcode                                                                                                                         |
+| `Bournemouth, Bournemouth, Christchurch and Poole`          | `bournemouth_bournemouth-christchurch-and-poole`         | Only the first comma becomes `_`; subsequent commas and all whitespace in the tail collapse to `-`                                          |
+| `Maes Awyr Caerdydd, Bro Morgannwg - the Vale of Glamorgan` | `maes-awyr-caerdydd_bro-morgannwg-the-vale-of-glamorgan` | Existing hyphens in the tail are preserved and adjacent runs of `-`/whitespace collapse to a single `-`                                     |
+| `TW18 3HT` (no comma)                                       | `tw183ht`                                                | Single token → lowercased, spaces stripped                                                                                                  |
 
 Postcode detection is case-insensitive and accepts the postcode with or without an internal space. All four UK nations are covered (`BT` Northern Ireland, `EH`/`G`/`AB` Scotland, `CF`/`LL`/`SA` Wales, plus all England formats and Crown Dependencies).
 

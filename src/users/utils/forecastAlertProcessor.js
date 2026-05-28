@@ -192,7 +192,7 @@ async function insertAuditEntries(db, entries) {
 async function sendForecastAlertsToUsers(db, auditEntries) {
   for (const entry of auditEntries) {
     try {
-      const lang = entry.lang
+      const lang = entry.lang || 'en'
       const templateId = getTemplateId(entry.alertType, lang)
       const locationSlug = formatLocationForUrl(entry.location)
       const checkAirQualityBaseUrl = config.get(

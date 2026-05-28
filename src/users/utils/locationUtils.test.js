@@ -171,5 +171,19 @@ describe('locationUtils', () => {
       expect(formatLocationForUrl(null)).toBe('')
       expect(formatLocationForUrl(undefined)).toBe('')
     })
+
+    it('should convert only the first comma to "_" and remaining commas/spaces to "-"', () => {
+      expect(
+        formatLocationForUrl('Bournemouth, Bournemouth, Christchurch and Poole')
+      ).toBe('bournemouth_bournemouth-christchurch-and-poole')
+    })
+
+    it('should collapse repeated hyphens introduced by " - " separators in the tail', () => {
+      expect(
+        formatLocationForUrl(
+          'Maes Awyr Caerdydd, Bro Morgannwg - the Vale of Glamorgan'
+        )
+      ).toBe('maes-awyr-caerdydd_bro-morgannwg-the-vale-of-glamorgan')
+    })
   })
 })

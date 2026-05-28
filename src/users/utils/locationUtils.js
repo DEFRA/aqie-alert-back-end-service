@@ -35,8 +35,13 @@ const UK_POSTCODE_REGEX = /^[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}$/i
  *  - Empty/falsy → ''
  *  - "<postcode>, <locality>" → postcode only, lowercased, spaces stripped
  *    e.g. "N8 7GE, Hornsey" → "n87ge"
- *  - "<place>, <area>" (non-postcode) → both parts slugged, joined with '_'
+ *  - "<place>, <area>" (non-postcode) → first comma becomes '_', any further
+ *    commas and all whitespace become '-' (collapsing repeats)
  *    e.g. "London, City of Westminster" → "london_city-of-westminster"
+ *    e.g. "Bournemouth, Bournemouth, Christchurch and Poole"
+ *         → "bournemouth_bournemouth-christchurch-and-poole"
+ *    e.g. "Maes Awyr Caerdydd, Bro Morgannwg - the Vale of Glamorgan"
+ *         → "maes-awyr-caerdydd_bro-morgannwg-the-vale-of-glamorgan"
  *  - "<single token>" (no comma) → lowercased, spaces stripped
  *    e.g. "TW18 3HT" → "tw183ht"
  *
@@ -49,13 +54,19 @@ export function formatLocationForUrl(location) {
   }
   const trimmed = location.trim()
   if (trimmed.includes(',')) {
-    const parts = trimmed.split(',').map((p) => p.trim())
-    if (UK_POSTCODE_REGEX.test(parts[0])) {
-      return parts[0].toLowerCase().replaceAll(/\s+/g, '')
+    const firstComma = trimmed.indexOf(',')
+    const first = trimmed.slice(0, firstComma).trim()
+    const rest = trimmed.slice(firstComma + 1).trim()
+    if (UK_POSTCODE_REGEX.test(first)) {
+      return first.toLowerCase().replaceAll(/\s+/g, '')
     }
-    return parts
-      .map((part) => part.toLowerCase().replaceAll(/\s+/g, '-'))
-      .join('_')
+    const firstSlug = first.toLowerCase().replaceAll(/\s+/g, '-')
+    const restSlug = rest
+      .toLowerCase()
+      .replaceAll(/[,\s]+/g, '-')
+      .replaceAll(/-+/g, '-')
+      .replace(/^-+|-+$/g, '')
+    return `${firstSlug}_${restSlug}`
   }
   return trimmed.toLowerCase().replaceAll(/\s+/g, '')
 }
