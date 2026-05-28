@@ -319,15 +319,31 @@ export async function processPollutantAlerts(db) {
     (alert) => !processedIds.has(alert['alert-id'])
   )
 
+  // Ricardo returns one row per hourly breach, so the same samplingPointId
+  // (== alert-id) can appear multiple times in a single response. Without
+  // collapsing here, every row would call sendAlertToUser even though the
+  // audit unique index `{alert-id, user_contact, location}` rejects the
+  // second insert — resulting in duplicate Notify calls. Keep the first
+  // occurrence per alert-id; Ricardo orders newest-first, so that's the most
+  // recent measurement.
+  const seenAlertIds = new Set()
+  const uniqueNewAlerts = []
+  for (const alert of newAlerts) {
+    if (!seenAlertIds.has(alert['alert-id'])) {
+      seenAlertIds.add(alert['alert-id'])
+      uniqueNewAlerts.push(alert)
+    }
+  }
+
   logger.info(
-    `[Pollutant] ${newAlerts.length} new alerts to process (${processedIds.size} already processed)`
+    `[Pollutant] ${uniqueNewAlerts.length} unique alerts to process (${newAlerts.length - uniqueNewAlerts.length} duplicate rows collapsed, ${processedIds.size} already processed in prior cycles)`
   )
 
-  if (newAlerts.length === 0) {
+  if (uniqueNewAlerts.length === 0) {
     return
   }
 
-  for (const alertDetail of newAlerts) {
+  for (const alertDetail of uniqueNewAlerts) {
     await processAlertForUsers(db, alertDetail)
   }
 

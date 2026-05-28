@@ -901,5 +901,111 @@ describe('pollutantAlertProcessor', () => {
       )
       expect(processedCalls).toHaveLength(0)
     })
+
+    it('should collapse duplicate samplingPointIds within a single cycle and send only one notification per matching user-location', async () => {
+      // Ricardo returns 4 rows: samplingPointId 1000 appears 3 times (hourly
+      // breaches at the same monitoring station), 2000 appears once.
+      // After dedup → 2 unique alerts. With 2 matching user-locations in
+      // region "England", we expect 2 * 2 = 4 sendNotification calls, NOT
+      // 4 rows * 2 user-locations = 8.
+      mockFetchAlerts.mockResolvedValue({
+        member: [
+          {
+            samplingPointId: 1000,
+            region: 'England',
+            pollutant: 'O<sub>3</sub> (O3)',
+            alertText: 'High ozone 23:00',
+            concentration: 190,
+            alertThreshold: null,
+            alertLevel: true,
+            validationStatus: 2
+          },
+          {
+            samplingPointId: 1000,
+            region: 'England',
+            pollutant: 'O<sub>3</sub> (O3)',
+            alertText: 'High ozone 22:00',
+            concentration: 185,
+            alertThreshold: null,
+            alertLevel: true,
+            validationStatus: 2
+          },
+          {
+            samplingPointId: 1000,
+            region: 'England',
+            pollutant: 'O<sub>3</sub> (O3)',
+            alertText: 'High ozone 21:00',
+            concentration: 182,
+            alertThreshold: null,
+            alertLevel: true,
+            validationStatus: 2
+          },
+          {
+            samplingPointId: 2000,
+            region: 'England',
+            pollutant: 'NO2',
+            alertText: 'NO2 breach',
+            concentration: 220,
+            alertThreshold: null,
+            alertLevel: true,
+            validationStatus: 2
+          }
+        ]
+      })
+
+      const alertDetailsColl = {
+        find: vi.fn().mockReturnValue({
+          project: vi.fn().mockReturnValue({
+            toArray: vi.fn().mockResolvedValue([])
+          })
+        }),
+        updateOne: vi.fn().mockResolvedValue({})
+      }
+
+      const usersColl = {
+        find: vi.fn().mockReturnValue({
+          toArray: vi.fn().mockResolvedValue([
+            {
+              user_contact: 'jay@example.com',
+              alertType: 'email',
+              lang: 'en',
+              locations: [
+                { location: 'Bristol', region: 'England' },
+                { location: 'Gloucester', region: 'England' }
+              ]
+            }
+          ])
+        })
+      }
+
+      const auditColl = {
+        insertOne: vi.fn().mockResolvedValue({}),
+        updateOne: vi.fn().mockResolvedValue({})
+      }
+
+      mockDb.collection.mockImplementation((name) => {
+        if (name === 'pollutant-alert-processing-state') return alertDetailsColl
+        if (name === 'USERS') return usersColl
+        if (name === 'pollutant-alerts-audit') return auditColl
+        return null
+      })
+
+      mockSendNotification.mockResolvedValue({ notificationId: 'notif-x' })
+
+      await processPollutantAlerts(mockDb)
+
+      // 2 unique alert-ids × 2 user-locations = 4 sends (NOT 4 rows × 2 = 8)
+      expect(mockSendNotification).toHaveBeenCalledTimes(4)
+
+      // First-occurrence-wins: the 23:00 row (concentration 190) should be
+      // the one carried into the notification for alert-id 1000, not 185 or 182.
+      const concentrationsSent = mockSendNotification.mock.calls.map(
+        (call) => call[0].personalisation.concentration
+      )
+      expect(concentrationsSent.filter((c) => c === '190')).toHaveLength(2)
+      expect(concentrationsSent.filter((c) => c === '220')).toHaveLength(2)
+      expect(concentrationsSent).not.toContain('185')
+      expect(concentrationsSent).not.toContain('182')
+    })
   })
 })

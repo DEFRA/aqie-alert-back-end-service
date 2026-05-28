@@ -133,13 +133,14 @@ If the code is unrecognised the cleaned string (HTML stripped) is returned as-is
 2. filterValidAlerts()               — keep only validationStatus==2 && (alertLevel=true || informationLevel=true)
 3. getAlreadyProcessedAlertIds()     — load IDs from pollutant-alert-processing-state collection
 4. Exclude already-seen IDs          — deduplicate across cron cycles
-5. For each new alert:
+5. Collapse duplicates within this cycle — Ricardo returns one row per hourly breach so the same samplingPointId can appear multiple times in one response; first-occurrence wins (Ricardo orders newest-first, so the latest measurement drives the notification)
+6. For each new unique alert:
    a. getRegionForSite(siteId)       — O(1) in-memory cache lookup; falls back to Ricardo's parsed region if siteId not in cache
    b. markAlertInProgress()          — upsert into pollutant-alert-processing-state (uses resolved region)
    c. Query USERS where locations.region == resolvedRegion
    d. getMatchingUsers()             — expand to one entry per matching location
    e. For each user-location pair:
-      - insertPollutantAuditEntry()  — write audit record (not-processed)
+      - insertPollutantAuditEntry()  — write audit record (not-processed); duplicate-key (11000) is logged and skipped
       - sendAlertToUser()            — build payload, call notifyServiceClient
       - updatePollutantAuditEntry()  — mark audit record processed + notificationId
    f. If ALL notifications succeeded → markAlertProcessed()
@@ -581,13 +582,14 @@ Scheduler       RicardoApiClient     MongoDB                   NotifyService
 
 ## Error Handling Summary
 
-| Failure point                       | Behaviour                                                                                                                                            |
-| ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GET /aqsr_alerts` throws           | Logs error with structured `upstreamStatus` field (HTTP status from Ricardo, or `null` for network/timeout). Cycle stops, next run at next cron tick |
-| No valid alerts after filter        | Logs info, cycle stops                                                                                                                               |
-| All alerts already processed        | Logs info, cycle stops immediately                                                                                                                   |
-| Individual notification fails       | Logs error, audit entry stays `not-processed`, `allSent` set to false — `pollutant-alert-processing-state` not marked processed                      |
-| Duplicate audit insert (code 11000) | Logs warning, skips insert, continues                                                                                                                |
-| Service restarts between ticks      | Immediate startup run catches any unprocessed alerts; `pollutant-alert-processing-state` prevents re-processing already-sent ones                    |
+| Failure point                                     | Behaviour                                                                                                                                                             |
+| ------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /aqsr_alerts` throws                         | Logs error with structured `upstreamStatus` field (HTTP status from Ricardo, or `null` for network/timeout). Cycle stops, next run at next cron tick                  |
+| No valid alerts after filter                      | Logs info, cycle stops                                                                                                                                                |
+| All alerts already processed                      | Logs info, cycle stops immediately                                                                                                                                    |
+| Duplicate samplingPointId rows in single response | Collapsed before the for-loop (first-occurrence wins); each alert-id is processed exactly once per cycle, so Notify is called exactly once per matching user-location |
+| Individual notification fails                     | Logs error, audit entry stays `not-processed`, `allSent` set to false — `pollutant-alert-processing-state` not marked processed                                       |
+| Duplicate audit insert (code 11000)               | Logs warning, skips insert, continues — defensive layer; should rarely fire now that same-cycle dedup runs upstream                                                   |
+| Service restarts between ticks                    | Immediate startup run catches any unprocessed alerts; `pollutant-alert-processing-state` prevents re-processing already-sent ones                                     |
 
 Failed `not-processed` entries in `pollutant-alerts-audit` are the evidence trail for manual investigation. No automatic retry is performed.
