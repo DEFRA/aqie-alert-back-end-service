@@ -6,6 +6,16 @@ import { provideProxy } from '../../common/helpers/proxy/proxy.js'
 const logger = createLogger()
 const isProduction = process.env.NODE_ENV === 'production'
 const RICARDO_REQUEST_TIMEOUT_MS = 30_000
+const TWENTY_FOUR_HOURS_MS = 24 * 60 * 60 * 1000
+
+// en-CA locale formats as YYYY-MM-DD; timeZone pins it to UK local date
+// regardless of host timezone, so BST/GMT shifts are handled correctly.
+const UK_DATE_FORMATTER = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'Europe/London',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit'
+})
 
 // ---------------------------------------------------------------------------
 // Mock alert data — used when RICARDO_API_USE_MOCK=true.
@@ -128,11 +138,15 @@ export async function getAccessToken() {
 async function fetchAlertsFromRicardo(options = {}) {
   const token = await getAccessToken()
   const baseAlertsUrl = config.get('ricardoApi.alertsUrl')
-  const { startDate, endDate } = options
-  const alertsUrl =
-    startDate && endDate
-      ? `${baseAlertsUrl}?start-date=${startDate}&end-date=${endDate}`
-      : baseAlertsUrl
+  // Default to a rolling 24-hour window (yesterday → today, UK local date)
+  // when the caller doesn't supply explicit dates, so the pollutant scheduler
+  // only ever sees alerts relevant to its 30-minute cycle.
+  const now = new Date()
+  const startDate =
+    options.startDate ||
+    UK_DATE_FORMATTER.format(new Date(now.getTime() - TWENTY_FOUR_HOURS_MS))
+  const endDate = options.endDate || UK_DATE_FORMATTER.format(now)
+  const alertsUrl = `${baseAlertsUrl}?start-date=${startDate}&end-date=${endDate}`
 
   logger.info(
     `Fetching AQSR alerts from Ricardo API ${JSON.stringify({ url: alertsUrl })}`

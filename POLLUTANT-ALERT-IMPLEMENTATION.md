@@ -53,7 +53,7 @@ Handles all HTTP communication with the Ricardo API.
 
 - Calls `getAccessToken()` to get a fresh token on every invocation
 - `GET` to `RICARDO_API_ALERTS_URL` with `Authorization: Bearer <token>`
-- Accepts optional `{ startDate, endDate }` — when both are present, appends `?start-date=YYYY-MM-DD&end-date=YYYY-MM-DD` to the URL (used by `GET /aqsr-alert` current-day mode to narrow the window; the pollutant scheduler calls with no args)
+- Accepts optional `{ startDate, endDate }` and **always appends** `?start-date=YYYY-MM-DD&end-date=YYYY-MM-DD` to the URL. Any missing/empty value is filled in from a default UK-local rolling 24-hour window — `startDate` defaults to _today − 24h_ and `endDate` defaults to _today_ (both formatted via `Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/London' })`, so BST/GMT shifts are handled correctly). The pollutant scheduler calls with no args and therefore gets that rolling window automatically; `GET /aqsr-alert` passes explicit dates which always win
 - Returns the full response body `{ "@context", "@id", "@type", "totalItems", "member": [...] }`
 - Throws on non-2xx response
 - Supports mock mode via `RICARDO_API_USE_MOCK=true` for local testing
@@ -129,7 +129,7 @@ If the code is unrecognised the cleaned string (HTML stripped) is returned as-is
 **`processPollutantAlerts` step-by-step:**
 
 ```
-1. fetchAlerts()                     — get fresh token, fetch Ricardo API
+1. fetchAlerts()                     — get fresh token, fetch Ricardo API (defaults to yesterday→today UK-local window)
 2. filterValidAlerts()               — keep only validationStatus==2 && (alertLevel=true || informationLevel=true)
 3. getAlreadyProcessedAlertIds()     — load IDs from pollutant-alert-processing-state collection
 4. Exclude already-seen IDs          — deduplicate across cron cycles
@@ -554,7 +554,8 @@ Scheduler       RicardoApiClient     MongoDB                   NotifyService
     │          POST /api/login_check    │                           │
     │◄── token ────────│                │                           │
     │                  │                │                           │
-    │          GET /api/aqsr_alerts     │                           │
+    │          GET /api/aqsr_alerts?start-date=YYYY-MM-DD&end-date=YYYY-MM-DD
+    │          (yesterday→today UK-local, filled in by default)
     │◄── alert data ───│                │                           │
     │                  │                │                           │
     │── filterValidAlerts()             │                           │

@@ -118,7 +118,9 @@ describe('ricardoApiClient', () => {
       expect(result).toEqual(alertsData)
       expect(mockFetch).toHaveBeenCalledTimes(2)
       expect(mockFetch).toHaveBeenLastCalledWith(
-        'https://uk-air-api.staging.rcdo.co.uk/api/aqsr_alerts',
+        expect.stringMatching(
+          /^https:\/\/uk-air-api\.staging\.rcdo\.co\.uk\/api\/aqsr_alerts\?start-date=\d{4}-\d{2}-\d{2}&end-date=\d{4}-\d{2}-\d{2}$/
+        ),
         expect.objectContaining({
           method: 'GET',
           headers: expect.objectContaining({
@@ -145,7 +147,7 @@ describe('ricardoApiClient', () => {
       )
     })
 
-    it('should call alerts URL without query params when no options provided', async () => {
+    it('should default to a yesterday→today UK-local window when no options provided', async () => {
       mockFetch
         .mockResolvedValueOnce({
           ok: true,
@@ -158,8 +160,20 @@ describe('ricardoApiClient', () => {
 
       await fetchAlerts()
 
+      const ukDate = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'Europe/London',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit'
+      })
+      const now = new Date()
+      const expectedEnd = ukDate.format(now)
+      const expectedStart = ukDate.format(
+        new Date(now.getTime() - 24 * 60 * 60 * 1000)
+      )
+
       expect(mockFetch).toHaveBeenLastCalledWith(
-        'https://uk-air-api.staging.rcdo.co.uk/api/aqsr_alerts',
+        `https://uk-air-api.staging.rcdo.co.uk/api/aqsr_alerts?start-date=${expectedStart}&end-date=${expectedEnd}`,
         expect.any(Object)
       )
     })
@@ -183,7 +197,7 @@ describe('ricardoApiClient', () => {
       )
     })
 
-    it('should not append query params when only startDate is provided', async () => {
+    it('should fill in default end-date (today UK-local) when only startDate is provided', async () => {
       mockFetch
         .mockResolvedValueOnce({
           ok: true,
@@ -197,7 +211,9 @@ describe('ricardoApiClient', () => {
       await fetchAlerts({ startDate: '2024-12-01' })
 
       expect(mockFetch).toHaveBeenLastCalledWith(
-        'https://uk-air-api.staging.rcdo.co.uk/api/aqsr_alerts',
+        expect.stringMatching(
+          /^https:\/\/uk-air-api\.staging\.rcdo\.co\.uk\/api\/aqsr_alerts\?start-date=2024-12-01&end-date=\d{4}-\d{2}-\d{2}$/
+        ),
         expect.any(Object)
       )
     })
