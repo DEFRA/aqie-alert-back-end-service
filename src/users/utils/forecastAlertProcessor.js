@@ -270,7 +270,9 @@ async function sendForecastAlertsToUsers(db, auditEntries) {
 
 /**
  * Runs the MetOffice DAQI forecast alert cycle once.
- * Called by the scheduler at 6am daily — no retry logic.
+ * Called by the scheduler hourly within the daily window — the first tick with
+ * current forecast data does the work; subsequent ticks short-circuit via
+ * the forecast-schedule-state guard.
  */
 export async function processForecastAlerts(db) {
   logger.info('[Forecast] Starting MetOffice forecast alert processing cycle')

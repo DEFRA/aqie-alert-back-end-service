@@ -17,8 +17,8 @@ const forecastAlertScheduler = {
         logger.info('Starting MetOffice forecast alert scheduler')
 
         server.events.on('start', async () => {
-          // Run immediately on startup to handle restarts that occur after 6am
-          // where the cron tick has already been missed for the day.
+          // Run immediately on startup to handle restarts that occur within
+          // the daily window after a tick has already been missed.
           // processForecastAlerts skips gracefully if already completed today
           // via the forecast-schedule-state check.
           logger.info(

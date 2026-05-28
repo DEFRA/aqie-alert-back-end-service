@@ -2,7 +2,7 @@
 
 ## Overview
 
-This feature adds automated DAQI (Daily Air Quality Index) forecast alert notifications to `aqie-alert-back-end-service`. Every day at 6am the service fetches the latest 5-day forecast from `aqie-forecast-api`, checks whether any UK monitoring station has a High DAQI value (≥ 7) for today, identifies the affected regions, matches registered users to those regions, and sends SMS/email notifications via `aqie-notify-service`.
+This feature adds automated DAQI (Daily Air Quality Index) forecast alert notifications to `aqie-alert-back-end-service`. Every morning between 05:00–10:00 UTC the service fetches the latest 5-day forecast from `aqie-forecast-api`, checks whether any UK monitoring station has a High DAQI value (≥ 7) for today, identifies the affected regions, matches registered users to those regions, and sends SMS/email notifications via `aqie-notify-service`. The scheduler fires hourly across this window — the first tick where the upstream forecast data is current for today does the work; subsequent ticks short-circuit via the per-day `forecast-schedule-state` guard.
 
 ---
 
@@ -14,7 +14,7 @@ This feature adds automated DAQI (Daily Air Quality Index) forecast alert notifi
 │                                                                   │
 │  forecast-alert-scheduler (plugin)                                │
 │    │  fires on server 'start'                                     │
-│    │  runs immediately + node-cron '0 6 * * *' daily              │
+│    │  runs immediately + node-cron '0 5-10 * * *' (hourly window) │
 │    ▼                                                              │
 │  processForecastAlerts(db)   ◄── forecastAlertProcessor.js        │
 │    │                                                              │
@@ -74,8 +74,8 @@ Core business logic. Exported functions:
 A Hapi plugin that owns the daily timer, using `node-cron` for scheduling.
 
 - Registers on **`server.start`** event
-- **Runs `processForecastAlerts` immediately on startup** — handles restarts that occur after 6am where the cron tick has already been missed for the day. `processForecastAlerts` skips gracefully if already completed today via the `forecast-schedule-state` check
-- Schedules the daily run via `node-cron` using the cron expression from config (default: `0 6 * * *` — 6am every day)
+- **Runs `processForecastAlerts` immediately on startup** — handles restarts that occur within the daily window where one or more cron ticks have already been missed. `processForecastAlerts` skips gracefully if already completed today via the `forecast-schedule-state` check
+- Schedules subsequent runs via `node-cron` using the cron expression from config (default: `0 5-10 * * *` — hourly between 05:00 and 10:00 UTC, covering 06:00–11:00 BST and 05:00–10:00 GMT). The processor's per-day `forecast-schedule-state` guard ensures only the first tick with current upstream data does the work
 - Stops the cron job cleanly via `server.ext('onPostStop')` on server shutdown
 
 ---
@@ -94,7 +94,7 @@ forecastAlertTemplates
 metOfficeForecast
   ├── forecastApiUrl     env: FORECAST_API_URL          (default: http://localhost:3005)
   ├── daqiAlertThreshold env: DAQI_ALERT_THRESHOLD      (default: 7)
-  └── cronSchedule       env: FORECAST_CRON_SCHEDULE    (default: '0 6 * * *')
+  └── cronSchedule       env: FORECAST_CRON_SCHEDULE    (default: '0 5-10 * * *')
 ```
 
 ### `src/common/helpers/mongodb.js`
@@ -131,8 +131,8 @@ db.collection('forecast-schedule-state').createIndex(
 
 `forecast-alert-scheduler.js` calls `processForecastAlerts(db)` in two situations:
 
-1. **On `server.start`** — immediately, every time the service starts. Handles restarts after 6am where the cron tick was already missed.
-2. **Via `node-cron`** — at 6am every day (`0 6 * * *`).
+1. **On `server.start`** — immediately, every time the service starts. Handles restarts where one or more cron ticks have already been missed for the day.
+2. **Via `node-cron`** — hourly between 05:00 and 10:00 UTC (`0 5-10 * * *`).
 
 In both cases `processForecastAlerts` begins with the same de-dup check.
 
@@ -189,7 +189,7 @@ The processor checks whether any station's `updated` field starts with today's d
 forecasts.some((f) => f.updated.startsWith('2026-04-02'))
 ```
 
-- **No current date found** → logs `"MetOffice forecast data not available for the day"` and stops. No DB writes. Next run is tomorrow at 6am.
+- **No current date found** → logs `"MetOffice forecast data not available for the day"` and stops. No DB writes — the next cron tick in the daily window will retry. If all ticks in the window fail to find current data, the next attempt is the first tick tomorrow.
 - **Current date confirmed** → continues to Step 3.
 
 ---
@@ -632,7 +632,7 @@ Alert Region: England
 | ------------------------------------- | ----------------------- | -------- |
 | `FORECAST_API_URL`                    | `http://localhost:3005` | Yes      |
 | `DAQI_ALERT_THRESHOLD`                | `7`                     | No       |
-| `FORECAST_CRON_SCHEDULE`              | `0 6 * * *`             | No       |
+| `FORECAST_CRON_SCHEDULE`              | `0 5-10 * * *`          | No       |
 | `SMS_FORECAST_ALERT_TEMPLATE_ID`      | _(empty)_               | Yes      |
 | `SMS_FORECAST_ALERT_CY_TEMPLATE_ID`   | _(empty)_               | Yes      |
 | `EMAIL_FORECAST_ALERT_TEMPLATE_ID`    | _(empty)_               | Yes      |
@@ -646,7 +646,8 @@ Alert Region: England
 Scheduler       ForecastApiClient    regionFinder    MongoDB              NotifyService
     │                  │                  │              │                     │
     │ on server start  │                  │              │                     │
-    │ (or 06:00 cron)  │                  │              │                     │
+    │ (or 05-10 UTC    │                  │              │                     │
+    │  hourly cron)    │                  │              │                     │
     │──────────────────────────────────────              │                     │
     │                  │                  │              │                     │
     │       check forecast-schedule-state ──────────────►│                     │
@@ -680,22 +681,22 @@ Scheduler       ForecastApiClient    regionFinder    MongoDB              Notify
     │                  │                  │              │                     │
     │  markScheduleComplete ────────────────────────────►│                     │
     │                  │                  │              │                     │
-    │  node-cron schedules next run at 06:00 tomorrow    │                     │
+    │  node-cron schedules next ticks 05-10 UTC tomorrow │                     │
 ```
 
 ---
 
 ## Error Handling Summary
 
-| Failure point                                   | Behaviour                                                                                            |
-| ----------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| `GET /forecast` throws                          | Logs error, cycle stops, next run at 6am tomorrow via node-cron                                      |
-| `updated` field not today                       | Logs `"MetOffice forecast data not available for the day"`, cycle stops, no DB writes                |
-| No stations breach threshold                    | Logs info, marks day complete in `forecast-schedule-state`, no notifications sent                    |
-| Individual notification fails                   | Logs error, audit entry stays `not-processed`, cycle continues for remaining entries                 |
-| Duplicate audit insert (code 11000)             | Logs warning, skips insert, continues                                                                |
-| Service restarts **before** 6am                 | Immediate startup run executes; data not yet available → logs and stops; cron fires at 6am as normal |
-| Service restarts **after** 6am, job already ran | Immediate startup run executes; `forecast-schedule-state` shows completed → skips                    |
-| Service restarts **after** 6am, job not yet run | Immediate startup run executes and processes normally; cron missed tick is recovered                 |
+| Failure point                                           | Behaviour                                                                                                                  |
+| ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `GET /forecast` throws                                  | Logs error, cycle stops, next cron tick in today's window will retry                                                       |
+| `updated` field not today                               | Logs `"MetOffice forecast data not available for the day"`, cycle stops, no DB writes — next tick in the window will retry |
+| No stations breach threshold                            | Logs info, marks day complete in `forecast-schedule-state`, no notifications sent                                          |
+| Individual notification fails                           | Logs error, audit entry stays `not-processed`, cycle continues for remaining entries                                       |
+| Duplicate audit insert (code 11000)                     | Logs warning, skips insert, continues                                                                                      |
+| Service restarts **before** the window (pre-05:00 UTC)  | Immediate startup run executes; data not yet available → logs and stops; cron fires from 05:00 UTC as normal               |
+| Service restarts **inside** the window, job already ran | Immediate startup run executes; `forecast-schedule-state` shows completed → skips                                          |
+| Service restarts **inside** the window, job not yet run | Immediate startup run executes and processes normally; cron continues to fire for the remainder of the window              |
 
 Failed `not-processed` entries in `metoffice-forecast-audit` are the evidence trail for manual investigation. No automatic retry is performed.

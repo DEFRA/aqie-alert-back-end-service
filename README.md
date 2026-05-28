@@ -1,6 +1,6 @@
 # aqie-alert-back-end-service
 
-Node.js microservice that manages air quality alert subscriptions. Users register for location-based SMS or email notifications when air quality is poor in their area, and can unsubscribe at any time. Two background schedulers dispatch alerts automatically — one polling the Ricardo AQSR API every 30 minutes for real-time pollutant measurements, and one fetching the MetOffice DAQI forecast daily at 6am.
+Node.js microservice that manages air quality alert subscriptions. Users register for location-based SMS or email notifications when air quality is poor in their area, and can unsubscribe at any time. Two background schedulers dispatch alerts automatically — one polling the Ricardo AQSR API every 30 minutes for real-time pollutant measurements, and one fetching the MetOffice DAQI forecast hourly between 05:00–10:00 UTC (the first tick with current forecast data does the work; subsequent ticks short-circuit via the per-day schedule-state guard).
 
 - [Requirements](#requirements)
   - [Node.js](#nodejs)
