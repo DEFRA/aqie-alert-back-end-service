@@ -1,3 +1,8 @@
+// Cap inputs at this length before any regex work — defends against
+// pathologically long strings consuming CPU even on linear-time patterns.
+// Realistic UK location names are well under 200 chars.
+const MAX_LOCATION_LENGTH = 500
+
 /**
  * Normalizes location names for consistent comparison and storage
  * Preserves full location context (e.g., "London, City of Westminster" vs "London Apprentice, Cornwall")
@@ -9,7 +14,11 @@ export function normalizeLocation(location) {
     return location
   }
 
-  return location.trim().toLowerCase().replaceAll(/\s+/g, ' ') // Replace multiple spaces with single space
+  return location
+    .slice(0, MAX_LOCATION_LENGTH)
+    .trim()
+    .toLowerCase()
+    .replaceAll(/\s{1,200}/g, ' ') // collapse runs of whitespace; bounded to prevent ReDoS
 }
 
 /**
@@ -25,7 +34,8 @@ export function isSameLocation(location1, location2) {
 
 // UK postcode: 1–2 area letters, district digit, optional district letter/digit,
 // optional space, sector digit, 2 unit letters. Case-insensitive.
-const UK_POSTCODE_REGEX = /^[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}$/i
+// All quantifiers are bounded so the engine cannot backtrack catastrophically.
+const UK_POSTCODE_REGEX = /^[A-Z]{1,2}\d[A-Z\d]?\s{0,10}\d[A-Z]{2}$/i
 
 /**
  * Formats a location name into a URL slug for the checkAirQualityLink used in
@@ -52,21 +62,22 @@ export function formatLocationForUrl(location) {
   if (!location) {
     return ''
   }
-  const trimmed = location.trim()
+  // Bound input before any regex work — defends against ReDoS on untrusted input
+  const trimmed = location.slice(0, MAX_LOCATION_LENGTH).trim()
   if (trimmed.includes(',')) {
     const firstComma = trimmed.indexOf(',')
     const first = trimmed.slice(0, firstComma).trim()
     const rest = trimmed.slice(firstComma + 1).trim()
     if (UK_POSTCODE_REGEX.test(first)) {
-      return first.toLowerCase().replaceAll(/\s+/g, '')
+      return first.toLowerCase().replaceAll(/\s{1,200}/g, '')
     }
-    const firstSlug = first.toLowerCase().replaceAll(/\s+/g, '-')
+    const firstSlug = first.toLowerCase().replaceAll(/\s{1,200}/g, '-')
     const restSlug = rest
       .toLowerCase()
-      .replaceAll(/[,\s]+/g, '-')
-      .replaceAll(/-+/g, '-')
-      .replace(/^-+|-+$/g, '')
+      .replaceAll(/[,\s]{1,200}/g, '-')
+      .replaceAll(/-{1,200}/g, '-')
+      .replace(/^-{1,200}|-{1,200}$/g, '')
     return `${firstSlug}_${restSlug}`
   }
-  return trimmed.toLowerCase().replaceAll(/\s+/g, '')
+  return trimmed.toLowerCase().replaceAll(/\s{1,200}/g, '')
 }
