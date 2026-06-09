@@ -7,6 +7,8 @@ const logger = createLogger()
 const isProduction = process.env.NODE_ENV === 'production'
 const RICARDO_REQUEST_TIMEOUT_MS = 30_000
 const TWENTY_FOUR_HOURS_MS = 24 * 60 * 60 * 1000
+const ACCEPT_LD_JSON = 'application/ld+json'
+const CONTENT_TYPE_JSON = 'application/json'
 
 // en-CA locale formats as YYYY-MM-DD; timeZone pins it to UK local date
 // regardless of host timezone, so BST/GMT shifts are handled correctly.
@@ -21,7 +23,7 @@ const UK_DATE_FORMATTER = new Intl.DateTimeFormat('en-CA', {
 // Mock alert data — used when RICARDO_API_USE_MOCK=true.
 // Only fetchAlerts is mocked. getAccessToken and fetchSiteMetaData always call
 // the real Ricardo API so the site-region cache is populated with live data.
-// Note: query params (start-date / end-date) are ignored — all 18 alerts are
+// Note: query params (start-date / end-date) are ignored — all alerts are
 // returned every call. For date-filter behaviour, run against the real API.
 // ---------------------------------------------------------------------------
 
@@ -99,6 +101,64 @@ async function ensureRicardoResponseOk(response, operation) {
   throw err
 }
 
+/**
+ * Performs an authenticated GET against the Ricardo API.
+ * Handles token retrieval, dispatcher setup, headers, timeout, error
+ * normalisation and JSON parsing — leaving callers to only construct the URL
+ * and surface the entity-specific success log.
+ */
+async function authenticatedRicardoGet(url, operation) {
+  const token = await getAccessToken()
+  const dispatcher = getRicardoDispatcher()
+  const fetchOptions = {
+    method: 'GET',
+    headers: {
+      'Content-Type': CONTENT_TYPE_JSON,
+      Accept: ACCEPT_LD_JSON,
+      Authorization: `Bearer ${token}`
+    },
+    signal: AbortSignal.timeout(RICARDO_REQUEST_TIMEOUT_MS)
+  }
+  if (dispatcher) {
+    fetchOptions.dispatcher = dispatcher
+  }
+
+  const response = await fetch(url, fetchOptions)
+  await ensureRicardoResponseOk(response, operation)
+  return response.json()
+}
+
+/**
+ * Wraps a Ricardo fetch with mock-fallback behaviour. When
+ * ricardoApi.useMock=true, the real upstream is still called so live traffic
+ * is generated (useful for perf testing and for verifying credentials remain
+ * valid), then the mock response is returned to the caller so downstream
+ * logic has deterministic data. When useMock=false, the real response is
+ * returned directly.
+ */
+async function fetchWithMockFallback(realFetch, options, mockBuilder, label) {
+  if (!config.get('ricardoApi.useMock')) {
+    return realFetch(options)
+  }
+
+  try {
+    const realData = await realFetch(options)
+    logger.info(
+      `[MOCK] Real Ricardo ${label} call succeeded with ${realData.totalItems} items; returning mock response instead`
+    )
+  } catch (err) {
+    logger.warn(
+      `[MOCK] Real Ricardo ${label} call failed during mock mode (continuing with mock) ${JSON.stringify({ error: err.message })}`
+    )
+  }
+
+  const mockResponse = mockBuilder()
+  logger.info(
+    `[MOCK] Returning mock Ricardo ${label} response (${mockResponse.totalItems} items)`
+  )
+  return mockResponse
+}
+
 export async function getAccessToken() {
   const loginUrl = config.get('ricardoApi.loginUrl')
   const email = config.get('ricardoApi.email')
@@ -109,7 +169,7 @@ export async function getAccessToken() {
   const dispatcher = getRicardoDispatcher()
   const fetchOptions = {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': CONTENT_TYPE_JSON },
     body: JSON.stringify({ email, password }),
     signal: AbortSignal.timeout(RICARDO_REQUEST_TIMEOUT_MS)
   }
@@ -136,7 +196,6 @@ export async function getAccessToken() {
 }
 
 async function fetchAlertsFromRicardo(options = {}) {
-  const token = await getAccessToken()
   const baseAlertsUrl = config.get('ricardoApi.alertsUrl')
   // Default to a rolling 24-hour window (yesterday → today, UK local date)
   // when the caller doesn't supply explicit dates, so the pollutant scheduler
@@ -152,79 +211,119 @@ async function fetchAlertsFromRicardo(options = {}) {
     `Fetching AQSR alerts from Ricardo API ${JSON.stringify({ url: alertsUrl })}`
   )
 
-  const dispatcher = getRicardoDispatcher()
-  const fetchOptions = {
-    method: 'GET',
-    headers: {
-      'Content-Type': 'application/json',
-      Accept: 'application/ld+json',
-      Authorization: `Bearer ${token}`
-    },
-    signal: AbortSignal.timeout(RICARDO_REQUEST_TIMEOUT_MS)
-  }
-  if (dispatcher) {
-    fetchOptions.dispatcher = dispatcher
-  }
-
-  const response = await fetch(alertsUrl, fetchOptions)
-  await ensureRicardoResponseOk(response, 'alerts fetch')
-
-  const data = await response.json()
+  const data = await authenticatedRicardoGet(alertsUrl, 'alerts fetch')
   logger.info(`Fetched ${data.totalItems} alerts from Ricardo API`)
   return data
 }
 
-// When useMock=true, the real Ricardo API is still called so live traffic
-// is generated against it (for perf measurement); the mock response is then
-// returned to the caller so downstream logic has deterministic data to work
-// with. When useMock=false, the real Ricardo response is returned directly.
 export async function fetchAlerts(options = {}) {
-  if (config.get('ricardoApi.useMock')) {
-    try {
-      const realData = await fetchAlertsFromRicardo(options)
-      logger.info(
-        `[PERF-TEST] Real Ricardo call succeeded with ${realData.totalItems} items; returning mock response instead`
-      )
-    } catch (err) {
-      logger.warn(
-        `[PERF-TEST] Real Ricardo call failed during mock mode (continuing with mock) ${JSON.stringify({ error: err.message })}`
-      )
-    }
-    logger.info(
-      `[MOCK] Returning mock Ricardo alerts response (${MOCK_ALERTS_RESPONSE.totalItems} items)`
-    )
-    return MOCK_ALERTS_RESPONSE
-  }
+  return fetchWithMockFallback(
+    fetchAlertsFromRicardo,
+    options,
+    () => MOCK_ALERTS_RESPONSE,
+    'alerts'
+  )
+}
 
-  return fetchAlertsFromRicardo(options)
+// ---------------------------------------------------------------------------
+// Mock DAQI alert data — used when RICARDO_API_USE_MOCK=true.
+// Live DAQI breaches are rare in staging, so a stable mock keeps the
+// front-end /daqi-alert page populated for hook-up and visual testing.
+// Dates are regenerated on every call so they always fall inside the
+// rolling 24-hour window (the controller's within-24h filter would otherwise
+// trim them out if the server has been running for more than a day).
+// ---------------------------------------------------------------------------
+function buildMockDaqiResponse() {
+  const now = Date.now()
+  const recent = new Date(now - 2 * 60 * 60 * 1000).toISOString()
+  const older = new Date(now - 8 * 60 * 60 * 1000).toISOString()
+
+  return {
+    '@context': '/api/contexts/DAQIAlert',
+    '@id': '/api/daqi_alerts',
+    '@type': 'Collection',
+    totalItems: 3,
+    member: [
+      {
+        '@id': '/api/d_a_q_i_alerts/7716220260528',
+        '@type': 'DAQIAlert',
+        id: 7716220260528,
+        samplingPointId: 77162,
+        siteId: 'UKA00819',
+        region: 'Wales',
+        daqi: 7,
+        level: 'High',
+        pollutant: 'O<sub>3</sub> (O3)',
+        validationStatus: 2,
+        date: recent
+      },
+      {
+        '@id': '/api/d_a_q_i_alerts/7716220260529',
+        '@type': 'DAQIAlert',
+        id: 7716220260529,
+        samplingPointId: 12401,
+        siteId: 'UKA00524',
+        region: 'Yorkshire & Humber',
+        daqi: 8,
+        level: 'High',
+        pollutant: 'NO<sub>2</sub> (NO2)',
+        validationStatus: 2,
+        date: older
+      },
+      {
+        '@id': '/api/d_a_q_i_alerts/7716220260530',
+        '@type': 'DAQIAlert',
+        id: 7716220260530,
+        samplingPointId: 1258,
+        siteId: 'UKA00482',
+        region: 'North West & Merseyside',
+        daqi: 9,
+        level: 'Very High',
+        pollutant: 'SO<sub>2</sub> (SO2)',
+        validationStatus: 2,
+        date: recent
+      }
+    ]
+  }
+}
+
+async function fetchDaqiAlertsFromRicardo(options = {}) {
+  const baseDaqiUrl = config.get('ricardoApi.daqiAlertsUrl')
+  const { startDate, endDate } = options
+  const daqiUrl =
+    startDate && endDate
+      ? `${baseDaqiUrl}?page=1&start-date=${startDate}&end-date=${endDate}`
+      : `${baseDaqiUrl}?page=1`
+
+  logger.info(
+    `Fetching DAQI alerts from Ricardo API ${JSON.stringify({ url: daqiUrl })}`
+  )
+
+  const data = await authenticatedRicardoGet(daqiUrl, 'daqi alerts fetch')
+  logger.info(`Fetched ${data.totalItems} DAQI alerts from Ricardo API`)
+  return data
+}
+
+export async function fetchDaqiAlerts(options = {}) {
+  return fetchWithMockFallback(
+    fetchDaqiAlertsFromRicardo,
+    options,
+    buildMockDaqiResponse,
+    'DAQI alerts'
+  )
 }
 
 export async function fetchSiteMetaData() {
-  const token = await getAccessToken()
   const siteMetaDataUrl = config.get('ricardoApi.siteMetaDataUrl')
 
   logger.info(
     `Fetching site metadata from Ricardo API ${JSON.stringify({ url: siteMetaDataUrl })}`
   )
 
-  const dispatcher = getRicardoDispatcher()
-  const fetchOptions = {
-    method: 'GET',
-    headers: {
-      'Content-Type': 'application/json',
-      Accept: 'application/ld+json',
-      Authorization: `Bearer ${token}`
-    },
-    signal: AbortSignal.timeout(RICARDO_REQUEST_TIMEOUT_MS)
-  }
-  if (dispatcher) {
-    fetchOptions.dispatcher = dispatcher
-  }
-
-  const response = await fetch(siteMetaDataUrl, fetchOptions)
-  await ensureRicardoResponseOk(response, 'site metadata fetch')
-
-  const data = await response.json()
+  const data = await authenticatedRicardoGet(
+    siteMetaDataUrl,
+    'site metadata fetch'
+  )
   logger.info(`Fetched ${data.totalItems} sites from Ricardo API`)
   return data
 }

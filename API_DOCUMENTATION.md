@@ -268,7 +268,15 @@ GET /aqsr-alert?start-date=2026-05-01&end-date=2026-05-08
 | Date not in `yyyy-mm-dd` format                | `start-date and end-date must be in yyyy-mm-dd format`                          |
 | `end-date` before `start-date`                 | `end-date must be on or after start-date`                                       |
 
-**502 Bad Gateway** — Ricardo API unavailable (real API mode only).
+**Upstream error responses** — Errors from the Ricardo API are **passed through with the original status code** so failures can be diagnosed without inspecting server logs. The response body always includes an `upstreamStatus` field carrying the original code (or `null` when the call never reached upstream).
+
+| Ricardo returns                       | This API returns  | Body                                                                                                                            |
+| ------------------------------------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| 4xx (e.g. 401, 403, 404, 429)         | same 4xx          | `{ statusCode, error, message: "Air quality alert service rejected the request", upstreamStatus: <original> }`                  |
+| 5xx (e.g. 500, 502, 503, 504)         | same 5xx          | `{ statusCode, error, message: "Air quality alert service upstream error", upstreamStatus: <original> }`                        |
+| Network error / timeout / no response | `502 Bad Gateway` | `{ statusCode: 502, error: "Bad Gateway", message: "Air quality alert service temporarily unavailable", upstreamStatus: null }` |
+
+The frontend can treat any non-2xx as "hide the alert banner" without parsing the body. `upstreamStatus` is intended for debugging from a browser dev tools network tab, not for user-facing logic.
 
 ---
 

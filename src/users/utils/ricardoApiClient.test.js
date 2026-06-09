@@ -1,5 +1,9 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { getAccessToken, fetchAlerts } from './ricardoApiClient.js'
+import {
+  getAccessToken,
+  fetchAlerts,
+  fetchDaqiAlerts
+} from './ricardoApiClient.js'
 
 vi.mock('undici', () => ({
   fetch: vi.fn(),
@@ -15,6 +19,8 @@ vi.mock('../../config.js', () => ({
           'https://uk-air-api.staging.rcdo.co.uk/api/login_check',
         'ricardoApi.alertsUrl':
           'https://uk-air-api.staging.rcdo.co.uk/api/aqsr_alerts',
+        'ricardoApi.daqiAlertsUrl':
+          'https://uk-air-api.staging.rcdo.co.uk/api/daqi_alerts',
         'ricardoApi.email': 'test@example.com',
         'ricardoApi.password': 'test-password'
       }
@@ -243,6 +249,134 @@ describe('ricardoApiClient', () => {
       // ProxyAgent should have been constructed
       const { ProxyAgent } = await import('undici')
       expect(ProxyAgent).toHaveBeenCalled()
+    })
+  })
+
+  describe('fetchDaqiAlerts', () => {
+    it('should call the DAQI endpoint with page=1 and the supplied date range', async () => {
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          json: vi.fn().mockResolvedValue({ token: 'test-token' })
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: vi.fn().mockResolvedValue({ totalItems: 0, member: [] })
+        })
+
+      await fetchDaqiAlerts({
+        startDate: '2026-06-07',
+        endDate: '2026-06-08'
+      })
+
+      expect(mockFetch).toHaveBeenLastCalledWith(
+        'https://uk-air-api.staging.rcdo.co.uk/api/daqi_alerts?page=1&start-date=2026-06-07&end-date=2026-06-08',
+        expect.objectContaining({
+          method: 'GET',
+          headers: expect.objectContaining({
+            Authorization: 'Bearer test-token'
+          })
+        })
+      )
+    })
+
+    it('should call the DAQI endpoint with only page=1 when no dates are supplied', async () => {
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          json: vi.fn().mockResolvedValue({ token: 'test-token' })
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: vi.fn().mockResolvedValue({ totalItems: 0, member: [] })
+        })
+
+      await fetchDaqiAlerts()
+
+      expect(mockFetch).toHaveBeenLastCalledWith(
+        'https://uk-air-api.staging.rcdo.co.uk/api/daqi_alerts?page=1',
+        expect.any(Object)
+      )
+    })
+
+    it('should return the parsed DAQI response on success', async () => {
+      const daqiResponse = {
+        totalItems: 1,
+        member: [
+          {
+            id: 7716220260528,
+            samplingPointId: 77162,
+            siteId: 'UKA00819',
+            daqi: 7,
+            validationStatus: 2,
+            date: '2026-06-08T02:00:00+01:00'
+          }
+        ]
+      }
+
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          json: vi.fn().mockResolvedValue({ token: 'test-token' })
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: vi.fn().mockResolvedValue(daqiResponse)
+        })
+
+      const result = await fetchDaqiAlerts({
+        startDate: '2026-06-07',
+        endDate: '2026-06-08'
+      })
+
+      expect(result).toEqual(daqiResponse)
+    })
+
+    it('should throw an error with status attached when DAQI endpoint returns 4xx', async () => {
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          json: vi.fn().mockResolvedValue({ token: 'test-token' })
+        })
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 401,
+          text: vi.fn().mockResolvedValue('Unauthorized')
+        })
+
+      try {
+        await fetchDaqiAlerts({
+          startDate: '2026-06-07',
+          endDate: '2026-06-08'
+        })
+        throw new Error('Expected fetchDaqiAlerts to throw')
+      } catch (err) {
+        expect(err.status).toBe(401)
+        expect(err.message).toMatch(/daqi alerts fetch failed/i)
+      }
+    })
+
+    it('should throw an error with status attached when DAQI endpoint returns 5xx', async () => {
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          json: vi.fn().mockResolvedValue({ token: 'test-token' })
+        })
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 503,
+          text: vi.fn().mockResolvedValue('Service Unavailable')
+        })
+
+      try {
+        await fetchDaqiAlerts({
+          startDate: '2026-06-07',
+          endDate: '2026-06-08'
+        })
+        throw new Error('Expected fetchDaqiAlerts to throw')
+      } catch (err) {
+        expect(err.status).toBe(503)
+      }
     })
   })
 })
