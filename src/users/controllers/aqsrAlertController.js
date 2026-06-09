@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto'
-import Boom from '@hapi/boom'
 import { fetchAlerts } from '../utils/ricardoApiClient.js'
 import { findRegion } from '../utils/regionFinder.js'
 import {
@@ -7,11 +6,13 @@ import {
   getSiteInfo
 } from '../utils/ricardoSiteAndRegionCache.js'
 import { formatPollutantName } from '../utils/pollutantAlertProcessor.js'
+import { mapUpstreamError } from '../utils/upstreamErrorMapper.js'
 import { createLogger } from '../../common/helpers/logging/logger.js'
 import { STATUS_OK } from '../utils/constants.js'
 
 const logger = createLogger()
 const LOG_PREFIX = '[AQSRAlert]'
+const SERVICE_NAME = 'Air quality alert service'
 const TWENTY_FOUR_HOURS_MS = 24 * 60 * 60 * 1000
 
 // en-CA locale formats as YYYY-MM-DD; timeZone pins it to UK local date
@@ -63,7 +64,7 @@ async function fetchRicardoAlerts(requestId, options = {}) {
     logger.error(
       `${LOG_PREFIX} Ricardo API call failed ${JSON.stringify({ requestId, upstreamStatus: err.status ?? null, error: err.message })}`
     )
-    return null
+    throw err
   }
 }
 
@@ -104,9 +105,11 @@ async function handleCurrentDayMode(request, h) {
   const startDate = UK_DATE_FORMATTER.format(
     new Date(now.getTime() - TWENTY_FOUR_HOURS_MS)
   )
-  const alertData = await fetchRicardoAlerts(requestId, { startDate, endDate })
-  if (!alertData) {
-    return Boom.badGateway('Air quality alert service temporarily unavailable')
+  let alertData
+  try {
+    alertData = await fetchRicardoAlerts(requestId, { startDate, endDate })
+  } catch (err) {
+    return mapUpstreamError(err, SERVICE_NAME)
   }
 
   const members = alertData.member ?? []
@@ -135,9 +138,11 @@ async function handleDateRangeMode(request, h) {
   const requestId = request.headers['x-request-id'] || `req-${randomUUID()}`
   const { startDate, endDate } = request.query
 
-  const alertData = await fetchRicardoAlerts(requestId, { startDate, endDate })
-  if (!alertData) {
-    return Boom.badGateway('Air quality alert service temporarily unavailable')
+  let alertData
+  try {
+    alertData = await fetchRicardoAlerts(requestId, { startDate, endDate })
+  } catch (err) {
+    return mapUpstreamError(err, SERVICE_NAME)
   }
 
   const members = alertData.member ?? []

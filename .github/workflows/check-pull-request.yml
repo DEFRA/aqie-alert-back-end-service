@@ -43,7 +43,7 @@ jobs:
       - name: Test Docker Image Build
         run: |
           set +e
-          docker build --no-cache --tag cdp-node-backend-template .
+          docker build --no-cache --tag aqie-alert-back-end-service .
           exit $?
 
       - name: SonarCloud Scan

@@ -122,7 +122,7 @@ describe('aqsrAlertController', () => {
       expect(mockH.response).toHaveBeenCalledWith([])
     })
 
-    it('should return 502 when Ricardo API throws', async () => {
+    it('should return 502 with null upstreamStatus when Ricardo throws without a status (network/timeout)', async () => {
       mockFindRegion.mockReturnValue(REGION)
       mockGetSiteIdsForRegion.mockReturnValue([SITE_ID_1])
       mockFetchAlerts.mockRejectedValue(new Error('Connection refused'))
@@ -134,6 +134,41 @@ describe('aqsrAlertController', () => {
 
       expect(result.isBoom).toBe(true)
       expect(result.output.statusCode).toBe(502)
+      expect(result.output.payload.upstreamStatus).toBeNull()
+    })
+
+    it('should pass through 4xx with upstreamStatus when Ricardo returns a client error', async () => {
+      mockFindRegion.mockReturnValue(REGION)
+      mockGetSiteIdsForRegion.mockReturnValue([SITE_ID_1])
+      const err = new Error('Unauthorized')
+      err.status = 401
+      mockFetchAlerts.mockRejectedValue(err)
+
+      const result = await aqsrAlertHandler(
+        makeRequest({ lat: 53.8, long: -1.5, currentDay: true }),
+        mockH
+      )
+
+      expect(result.isBoom).toBe(true)
+      expect(result.output.statusCode).toBe(401)
+      expect(result.output.payload.upstreamStatus).toBe(401)
+    })
+
+    it('should pass through 5xx with upstreamStatus when Ricardo returns a server error', async () => {
+      mockFindRegion.mockReturnValue(REGION)
+      mockGetSiteIdsForRegion.mockReturnValue([SITE_ID_1])
+      const err = new Error('Service Unavailable')
+      err.status = 503
+      mockFetchAlerts.mockRejectedValue(err)
+
+      const result = await aqsrAlertHandler(
+        makeRequest({ lat: 53.8, long: -1.5, currentDay: true }),
+        mockH
+      )
+
+      expect(result.isBoom).toBe(true)
+      expect(result.output.statusCode).toBe(503)
+      expect(result.output.payload.upstreamStatus).toBe(503)
     })
 
     it('should fetch Ricardo with yesterday/today date range in current-day mode', async () => {
@@ -354,7 +389,7 @@ describe('aqsrAlertController', () => {
   })
 
   describe('Mode 2 — startDate + endDate', () => {
-    it('should return 502 when Ricardo API throws', async () => {
+    it('should return 502 with null upstreamStatus when Ricardo throws without a status (network/timeout)', async () => {
       mockFetchAlerts.mockRejectedValue(new Error('Timeout'))
 
       const result = await aqsrAlertHandler(
@@ -364,6 +399,37 @@ describe('aqsrAlertController', () => {
 
       expect(result.isBoom).toBe(true)
       expect(result.output.statusCode).toBe(502)
+      expect(result.output.payload.upstreamStatus).toBeNull()
+    })
+
+    it('should pass through 4xx with upstreamStatus when Ricardo returns a client error', async () => {
+      const err = new Error('Forbidden')
+      err.status = 403
+      mockFetchAlerts.mockRejectedValue(err)
+
+      const result = await aqsrAlertHandler(
+        makeRequest({ startDate: '2024-12-01', endDate: '2025-08-13' }),
+        mockH
+      )
+
+      expect(result.isBoom).toBe(true)
+      expect(result.output.statusCode).toBe(403)
+      expect(result.output.payload.upstreamStatus).toBe(403)
+    })
+
+    it('should pass through 5xx with upstreamStatus when Ricardo returns a server error', async () => {
+      const err = new Error('Internal Server Error')
+      err.status = 500
+      mockFetchAlerts.mockRejectedValue(err)
+
+      const result = await aqsrAlertHandler(
+        makeRequest({ startDate: '2024-12-01', endDate: '2025-08-13' }),
+        mockH
+      )
+
+      expect(result.isBoom).toBe(true)
+      expect(result.output.statusCode).toBe(500)
+      expect(result.output.payload.upstreamStatus).toBe(500)
     })
 
     it('should fetch Ricardo with correct start-date and end-date params', async () => {

@@ -137,13 +137,13 @@ const config = convict({
       smsSetUpConfirmation: {
         doc: 'SMS notification template ID',
         format: String,
-        default: '',
+        default: '897b8018-f822-4fa3-bcd6-936972546c4e',
         env: 'SMS_SET_UP_CONFIRMATION_TEMPLATE_ID'
       },
       emailSetUpConfirmation: {
         doc: 'Email notification template ID',
         format: String,
-        default: '',
+        default: 'ef68edc3-a936-48d9-ae86-d3bf1d86d29a',
         env: 'EMAIL_SET_UP_CONFIRMATION_TEMPLATE_ID'
       },
       unsubscribeEmailLink: {
@@ -167,29 +167,35 @@ const config = convict({
       default: 'https://uk-air-api.staging.rcdo.co.uk/api/aqsr_alerts',
       env: 'RICARDO_API_ALERTS_URL'
     },
+    daqiAlertsUrl: {
+      doc: 'Ricardo API DAQI alerts endpoint',
+      format: String,
+      default: 'https://uk-air-api.staging.rcdo.co.uk/api/daqi_alerts',
+      env: 'RICARDO_API_DAQI_ALERTS_URL'
+    },
     email: {
       doc: 'Ricardo API login email',
       format: String,
-      default: '',
+      default: 'maruthi.chokkanathan@cognizant.com',
       env: 'RICARDO_API_EMAIL'
     },
     password: {
       doc: 'Ricardo API login password',
       format: String,
-      default: '',
+      default: 'Mr5e7TFseqzD8Mt#',
       env: 'RICARDO_API_PASSWORD',
       sensitive: true
     },
     cronSchedule: {
       doc: 'Cron expression for the pollutant alert job (default: every 30 minutes)',
       format: String,
-      default: '*/30 * * * *',
+      default: '*/15 * * * *',
       env: 'POLLUTANT_CRON_SCHEDULE'
     },
     useMock: {
       doc: 'Use mock Ricardo API response instead of making real HTTP calls (for local testing)',
       format: Boolean,
-      default: false,
+      default: true,
       env: 'RICARDO_API_USE_MOCK'
     },
     siteMetaDataUrl: {
@@ -203,7 +209,7 @@ const config = convict({
     smsAlert: {
       doc: 'SMS alert template ID for pollutant alerts (English)',
       format: String,
-      default: '',
+      default: '372e5c47-37b0-445d-8a7a-f3f2a391787c',
       env: 'SMS_ALERT_TEMPLATE_ID'
     },
     smsAlertCy: {
@@ -215,7 +221,7 @@ const config = convict({
     emailAlert: {
       doc: 'Email alert template ID for pollutant alerts (English)',
       format: String,
-      default: '',
+      default: 'd16e38cd-1d3e-467a-84c9-6bbf4d09c99d',
       env: 'EMAIL_ALERT_TEMPLATE_ID'
     },
     emailAlertCy: {
@@ -235,7 +241,7 @@ const config = convict({
     smsAlert: {
       doc: 'SMS forecast alert template ID (English)',
       format: String,
-      default: '',
+      default: '31e92306-8cf4-415e-b0d9-b928bbbaf97b',
       env: 'SMS_FORECAST_ALERT_TEMPLATE_ID'
     },
     smsAlertCy: {
@@ -247,7 +253,7 @@ const config = convict({
     emailAlert: {
       doc: 'Email forecast alert template ID (English)',
       format: String,
-      default: '',
+      default: 'b37ad7b7-eb3a-450d-a4b4-aae0c7f6a574',
       env: 'EMAIL_FORECAST_ALERT_TEMPLATE_ID'
     },
     emailAlertCy: {
