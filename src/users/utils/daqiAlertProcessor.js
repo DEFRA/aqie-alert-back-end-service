@@ -1,15 +1,17 @@
 import { fetchDaqiAlerts } from './ricardoApiClient.js'
 import { sendNotification } from './notifyServiceClient.js'
-import {
-  getRegionForSite,
-  getSiteCacheSize,
-  ensureSiteCachePopulated
-} from './ricardoSiteAndRegionCache.js'
+import { getRegionForSite } from './ricardoSiteAndRegionCache.js'
 import { formatLocationForUrl } from './locationUtils.js'
 import {
   cleanPollutantName,
   formatPollutantName
 } from './pollutantAlertProcessor.js'
+import { getRollingDayWindow } from './dateRangeUtils.js'
+import {
+  collapseInCycleDuplicates,
+  ensureCacheReadyForCycle,
+  getMatchingUsers
+} from './alertCycleUtils.js'
 import { config } from '../../config.js'
 import { createLogger } from '../../common/helpers/logging/logger.js'
 import { DB_ERROR_CODE } from './constants.js'
@@ -17,26 +19,6 @@ import { DB_ERROR_CODE } from './constants.js'
 const logger = createLogger()
 const DAQI_ALERT_STATUS_COLLECTION = 'daqi-alert-processing-state'
 const DAQI_ALERTS_AUDIT_COLLECTION = 'daqi-alerts-audit'
-const TWENTY_FOUR_HOURS_MS = 24 * 60 * 60 * 1000
-
-// en-CA locale formats as YYYY-MM-DD; timeZone pins it to UK local date
-// regardless of host timezone, so BST/GMT shifts are handled correctly.
-const UK_DATE_FORMATTER = new Intl.DateTimeFormat('en-CA', {
-  timeZone: 'Europe/London',
-  year: 'numeric',
-  month: '2-digit',
-  day: '2-digit'
-})
-
-function getDaqiAlertWindow() {
-  const now = new Date()
-  return {
-    startDate: UK_DATE_FORMATTER.format(
-      new Date(now.getTime() - TWENTY_FOUR_HOURS_MS)
-    ),
-    endDate: UK_DATE_FORMATTER.format(now)
-  }
-}
 
 function buildAlertKey(member) {
   return `${member.samplingPointId}-${member.siteId}-${member.date}`
@@ -173,19 +155,6 @@ async function updateDaqiAuditEntry(
   )
 }
 
-function getMatchingUsers(users, alertRegion) {
-  return users.flatMap((user) =>
-    (user.locations ?? [])
-      .filter((loc) => loc.region === alertRegion)
-      .map((loc) => ({
-        userContact: user.user_contact,
-        alertType: user.alertType,
-        location: loc.location,
-        lang: user.lang ?? 'en'
-      }))
-  )
-}
-
 function getTemplateId(alertType, lang) {
   const isWelsh = lang === 'cy'
   if (alertType === 'sms') {
@@ -297,42 +266,8 @@ async function processAlertForUsers(db, alertDetail) {
   }
 }
 
-// Same (samplingPointId, siteId, date) row can appear multiple times in a
-// single Ricardo response; collapse to first occurrence so we don't double-
-// process within a cycle (the audit unique index would reject duplicates
-// anyway, but this avoids the wasted Notify calls and noisy logs).
-function collapseInCycleDuplicates(alerts) {
-  const seen = new Set()
-  const unique = []
-  for (const alert of alerts) {
-    if (!seen.has(alert['alert-id'])) {
-      seen.add(alert['alert-id'])
-      unique.push(alert)
-    }
-  }
-  return unique
-}
-
-// Region resolution depends entirely on the site cache. If it's empty the
-// startup fetch likely failed — try one on-demand refresh, and skip the cycle
-// rather than skipping every alert one by one. Returns true when the cache is
-// usable, false when the caller should abort the cycle.
-async function ensureCacheReadyForCycle() {
-  if (getSiteCacheSize() > 0) {
-    return true
-  }
-  const populated = await ensureSiteCachePopulated()
-  if (populated) {
-    return true
-  }
-  logger.info(
-    '[DAQI] Site cache empty and refresh failed; skipping cycle (will retry on next run)'
-  )
-  return false
-}
-
 async function fetchDaqiAlertsForCycle() {
-  const { startDate, endDate } = getDaqiAlertWindow()
+  const { startDate, endDate } = getRollingDayWindow()
   try {
     return await fetchDaqiAlerts({ startDate, endDate })
   } catch (err) {
@@ -373,7 +308,7 @@ export async function processDaqiAlerts(db) {
   )
   if (uniqueNewAlerts.length === 0) return
 
-  if (!(await ensureCacheReadyForCycle())) return
+  if (!(await ensureCacheReadyForCycle('[DAQI]'))) return
 
   for (const alertDetail of uniqueNewAlerts) {
     await processAlertForUsers(db, alertDetail)
@@ -389,6 +324,5 @@ export {
   markAlertInProgress,
   markAlertProcessed,
   sendAlertToUser,
-  buildAlertKey,
-  getDaqiAlertWindow
+  buildAlertKey
 }

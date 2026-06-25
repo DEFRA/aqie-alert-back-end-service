@@ -7,31 +7,16 @@ import {
 import { resolveRegionContext } from '../utils/regionResolver.js'
 import { formatPollutantName } from '../utils/pollutantAlertProcessor.js'
 import { mapUpstreamError } from '../utils/upstreamErrorMapper.js'
+import {
+  isWithinLast24Hours,
+  getRollingDayWindow
+} from '../utils/dateRangeUtils.js'
 import { createLogger } from '../../common/helpers/logging/logger.js'
 import { STATUS_OK } from '../utils/constants.js'
 
 const logger = createLogger()
 const LOG_PREFIX = '[AQSRAlert]'
 const SERVICE_NAME = 'Air quality alert service'
-const TWENTY_FOUR_HOURS_MS = 24 * 60 * 60 * 1000
-
-// en-CA locale formats as YYYY-MM-DD; timeZone pins it to UK local date
-// regardless of host timezone, so BST/GMT shifts are handled correctly.
-const UK_DATE_FORMATTER = new Intl.DateTimeFormat('en-CA', {
-  timeZone: 'Europe/London',
-  year: 'numeric',
-  month: '2-digit',
-  day: '2-digit'
-})
-
-function isWithinLast24Hours(dateString) {
-  const alertDate = new Date(dateString)
-  if (!Number.isFinite(alertDate.getTime())) {
-    return false
-  }
-  const ageMs = Date.now() - alertDate.getTime()
-  return ageMs >= 0 && ageMs <= TWENTY_FOUR_HOURS_MS
-}
 
 function buildAlertEntry(alert) {
   const siteInfo = getSiteInfo(alert.siteId)
@@ -85,11 +70,7 @@ async function handleCurrentDayMode(request, h) {
   // Narrow the Ricardo query to yesterday + today (UK local date) so the
   // response stays small; the isWithinLast24Hours filter below then trims it
   // to the precise window.
-  const now = new Date()
-  const endDate = UK_DATE_FORMATTER.format(now)
-  const startDate = UK_DATE_FORMATTER.format(
-    new Date(now.getTime() - TWENTY_FOUR_HOURS_MS)
-  )
+  const { startDate, endDate } = getRollingDayWindow()
   let alertData
   try {
     alertData = await fetchRicardoAlerts(requestId, { startDate, endDate })
