@@ -5,6 +5,16 @@ vi.mock('../utils/ricardoApiClient.js', () => ({
   fetchDaqiAlerts: vi.fn()
 }))
 
+vi.mock('../utils/regionFinder.js', () => ({
+  findRegion: vi.fn()
+}))
+
+vi.mock('../utils/ricardoSiteAndRegionCache.js', () => ({
+  getRegionForSite: vi.fn(),
+  getSiteCacheSize: vi.fn().mockReturnValue(1),
+  ensureSiteCachePopulated: vi.fn().mockResolvedValue(true)
+}))
+
 vi.mock('../utils/pollutantAlertProcessor.js', () => ({
   formatPollutantName: vi.fn((p) => p),
   cleanPollutantName: vi.fn((p) => p),
@@ -58,6 +68,10 @@ function makeDaqiAlert(overrides = {}) {
 
 describe('daqiAlertController', () => {
   let mockFetchDaqiAlerts
+  let mockFindRegion
+  let mockGetRegionForSite
+  let mockGetSiteCacheSize
+  let mockEnsureSiteCachePopulated
   let mockH
 
   beforeEach(async () => {
@@ -66,6 +80,23 @@ describe('daqiAlertController', () => {
     mockFetchDaqiAlerts = vi.mocked(
       (await import('../utils/ricardoApiClient.js')).fetchDaqiAlerts
     )
+    mockFindRegion = vi.mocked(
+      (await import('../utils/regionFinder.js')).findRegion
+    )
+    const cache = await import('../utils/ricardoSiteAndRegionCache.js')
+    mockGetRegionForSite = vi.mocked(cache.getRegionForSite)
+    mockGetSiteCacheSize = vi.mocked(cache.getSiteCacheSize)
+    mockEnsureSiteCachePopulated = vi.mocked(cache.ensureSiteCachePopulated)
+
+    // Defaults: coordinates resolve to Wales, the cache maps the known Welsh
+    // sample sites to "Wales" and everything else (incl. undefined) to null,
+    // and the cache is healthy. Tests override these as needed.
+    mockFindRegion.mockReturnValue('Wales')
+    mockGetRegionForSite.mockImplementation((siteId) =>
+      siteId === 'UKA00819' || siteId === 'UKA00911' ? 'Wales' : null
+    )
+    mockGetSiteCacheSize.mockReturnValue(1)
+    mockEnsureSiteCachePopulated.mockResolvedValue(true)
 
     mockH = {
       response: vi.fn().mockReturnValue({ code: vi.fn().mockReturnValue({}) })
@@ -74,7 +105,7 @@ describe('daqiAlertController', () => {
 
   const request = {
     headers: { 'x-request-id': 'test-req-id' },
-    query: {}
+    query: { lat: 51.5, long: -3.2 }
   }
 
   describe('Ricardo call with auto-computed dates', () => {
@@ -99,6 +130,8 @@ describe('daqiAlertController', () => {
         {
           headers: { 'x-request-id': 'test-req-id' },
           query: {
+            lat: 51.5,
+            long: -3.2,
             startDate: '2020-01-01',
             endDate: '2020-12-31',
             'start-date': '2020-01-01',
@@ -130,6 +163,64 @@ describe('daqiAlertController', () => {
 
       await daqiAlertHandler(request, mockH)
 
+      expect(mockH.response).toHaveBeenCalledWith([])
+    })
+  })
+
+  describe('Region scoping', () => {
+    it('should return [] without calling Ricardo when region is Unknown', async () => {
+      mockFindRegion.mockReturnValue('Unknown')
+
+      await daqiAlertHandler(request, mockH)
+
+      expect(mockH.response).toHaveBeenCalledWith([])
+      expect(mockFetchDaqiAlerts).not.toHaveBeenCalled()
+    })
+
+    it('should exclude alerts when no site resolves to the requested region', async () => {
+      // Alert is in a healthy cache but its site maps to a different region.
+      mockFetchDaqiAlerts.mockResolvedValue({
+        member: [makeDaqiAlert({ siteId: 'UKA00524' })]
+      })
+      mockGetRegionForSite.mockReturnValue('Scotland')
+
+      await daqiAlertHandler(request, mockH)
+
+      expect(mockH.response).toHaveBeenCalledWith([])
+    })
+
+    it('should return [] when cache is empty and refresh fails', async () => {
+      mockGetSiteCacheSize.mockReturnValue(0)
+      mockEnsureSiteCachePopulated.mockResolvedValue(false)
+
+      await daqiAlertHandler(request, mockH)
+
+      expect(mockEnsureSiteCachePopulated).toHaveBeenCalled()
+      expect(mockH.response).toHaveBeenCalledWith([])
+      expect(mockFetchDaqiAlerts).not.toHaveBeenCalled()
+    })
+
+    it('should refresh an empty cache and serve results when refresh repopulates it', async () => {
+      mockGetSiteCacheSize.mockReturnValue(0)
+      mockEnsureSiteCachePopulated.mockResolvedValue(true)
+      mockFetchDaqiAlerts.mockResolvedValue({ member: [makeDaqiAlert()] })
+
+      await daqiAlertHandler(request, mockH)
+
+      expect(mockEnsureSiteCachePopulated).toHaveBeenCalled()
+      expect(mockFetchDaqiAlerts).toHaveBeenCalled()
+      const responseArg = mockH.response.mock.calls[0][0]
+      expect(responseArg).toHaveLength(1)
+    })
+
+    it('should exclude alerts whose siteId resolves to a different region', async () => {
+      mockFetchDaqiAlerts.mockResolvedValue({
+        member: [makeDaqiAlert({ siteId: 'UKA99999' })]
+      })
+
+      await daqiAlertHandler(request, mockH)
+
+      // Default mock maps UKA99999 → null, so it can't match "Wales".
       expect(mockH.response).toHaveBeenCalledWith([])
     })
   })
@@ -266,15 +357,14 @@ describe('daqiAlertController', () => {
       expect(responseArg[0].samplingPointId).toBeNull()
     })
 
-    it('should set siteId to null when missing from Ricardo response', async () => {
+    it('should exclude alerts with no siteId (cannot be region-matched)', async () => {
       mockFetchDaqiAlerts.mockResolvedValue({
         member: [makeDaqiAlert({ siteId: undefined })]
       })
 
       await daqiAlertHandler(request, mockH)
 
-      const responseArg = mockH.response.mock.calls[0][0]
-      expect(responseArg[0].siteId).toBeNull()
+      expect(mockH.response).toHaveBeenCalledWith([])
     })
   })
 

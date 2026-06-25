@@ -79,6 +79,23 @@ describe('forecastApiClient', () => {
     )
   })
 
+  it('should truncate a large upstream error body in the thrown message', async () => {
+    const bigBody = `<html>${'x'.repeat(5000)}</html>`
+    mockFetch.mockResolvedValue({
+      ok: false,
+      status: 500,
+      text: vi.fn().mockResolvedValue(bigBody)
+    })
+
+    const err = await fetchForecast().catch((e) => e)
+
+    expect(err.message.startsWith('Forecast API responded with 500: ')).toBe(
+      true
+    )
+    expect(err.message).not.toContain('xxxxx'.repeat(50)) // no giant body
+    expect(err.message.length).toBeLessThan(300)
+  })
+
   it('should handle response body without forecasts property', async () => {
     const mockBody = {}
     mockFetch.mockResolvedValue({

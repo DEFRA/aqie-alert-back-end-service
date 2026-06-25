@@ -13,7 +13,7 @@ import { config } from '../../config.js'
 import { findRegion } from '../utils/regionFinder.js'
 import {
   MAGIC_NO_201,
-  MAGIC_NO_DB_ERROR_CODE,
+  DB_ERROR_CODE,
   MAGIC_NO_FIVE
 } from '../utils/constants.js'
 
@@ -386,7 +386,7 @@ async function runAlertPipeline(db, context, prepared, startTime, h) {
         }
       })}`
     )
-    if (err.code === MAGIC_NO_DB_ERROR_CODE) {
+    if (err.code === DB_ERROR_CODE) {
       logger.warn(
         `Duplicate key error detected ${JSON.stringify({ requestId, duplicateKey: err.keyValue })}`
       )

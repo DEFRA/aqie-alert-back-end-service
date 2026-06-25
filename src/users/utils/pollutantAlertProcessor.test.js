@@ -49,8 +49,13 @@ vi.mock('./maskingUtils.js', () => ({
 }))
 
 vi.mock('./ricardoSiteAndRegionCache.js', () => ({
-  getRegionForSite: vi.fn().mockReturnValue(null)
+  getRegionForSite: vi.fn().mockReturnValue(null),
+  getSiteCacheSize: vi.fn().mockReturnValue(1),
+  ensureSiteCachePopulated: vi.fn().mockResolvedValue(true)
 }))
+
+const { getRegionForSite, getSiteCacheSize, ensureSiteCachePopulated } =
+  await import('./ricardoSiteAndRegionCache.js')
 
 describe('pollutantAlertProcessor', () => {
   describe('cleanPollutantName', () => {
@@ -130,10 +135,11 @@ describe('pollutantAlertProcessor', () => {
       const result = filterValidAlerts(members)
 
       expect(result).toHaveLength(1)
+      // Ricardo's `region` is deliberately dropped; region is resolved from
+      // siteId via the cache later in processAlertForUsers.
       expect(result[0]).toEqual({
         'alert-id': 331,
         siteId: 'UKA00339',
-        region: 'Greater London',
         pollutant: 'O<sub>3</sub>',
         alertText: 'tbc',
         concentration: 168,
@@ -318,6 +324,13 @@ describe('pollutantAlertProcessor', () => {
       mockSendNotification = vi.mocked(
         (await import('./notifyServiceClient.js')).sendNotification
       )
+
+      // Region is always resolved from siteId via the cache. Default to a
+      // healthy cache returning "England"; individual tests override the region
+      // (e.g. Wales/Scotland) or the cache state as needed.
+      getRegionForSite.mockReturnValue('England')
+      getSiteCacheSize.mockReturnValue(1)
+      ensureSiteCachePopulated.mockResolvedValue(true)
 
       mockDb = {
         collection: vi.fn()
@@ -514,6 +527,7 @@ describe('pollutantAlertProcessor', () => {
           }
         ]
       })
+      getRegionForSite.mockReturnValue('Scotland')
 
       const alertDetailsColl = {
         find: vi.fn().mockReturnValue({
@@ -730,6 +744,7 @@ describe('pollutantAlertProcessor', () => {
           }
         ]
       })
+      getRegionForSite.mockReturnValue('Wales')
 
       const alertDetailsColl = {
         find: vi.fn().mockReturnValue({
@@ -857,6 +872,7 @@ describe('pollutantAlertProcessor', () => {
           }
         ]
       })
+      getRegionForSite.mockReturnValue('Wales')
 
       const alertDetailsColl = {
         find: vi.fn().mockReturnValue({
@@ -1006,6 +1022,83 @@ describe('pollutantAlertProcessor', () => {
       expect(concentrationsSent.filter((c) => c === '220')).toHaveLength(2)
       expect(concentrationsSent).not.toContain('185')
       expect(concentrationsSent).not.toContain('182')
+    })
+
+    it('should skip an alert whose siteId is not in the site cache (no notification)', async () => {
+      getRegionForSite.mockReturnValue(null)
+      mockFetchAlerts.mockResolvedValue({
+        member: [
+          {
+            samplingPointId: 1234,
+            siteId: 'UKA-UNKNOWN',
+            region: 'England',
+            pollutant: 'O3',
+            alertText: 'tbc',
+            concentration: 100,
+            alertThreshold: null,
+            alertLevel: true,
+            validationStatus: 2
+          }
+        ]
+      })
+
+      const alertDetailsColl = {
+        find: vi.fn().mockReturnValue({
+          project: vi.fn().mockReturnValue({
+            toArray: vi.fn().mockResolvedValue([])
+          })
+        }),
+        updateOne: vi.fn().mockResolvedValue({})
+      }
+      mockDb.collection.mockImplementation((name) => {
+        if (name === 'pollutant-alert-processing-state') return alertDetailsColl
+        return null
+      })
+
+      await processPollutantAlerts(mockDb)
+
+      // Region can't be resolved → alert skipped, never marked in-progress.
+      expect(mockSendNotification).not.toHaveBeenCalled()
+      expect(alertDetailsColl.updateOne).not.toHaveBeenCalled()
+    })
+
+    it('should skip the cycle when the site cache is empty and refresh fails', async () => {
+      getSiteCacheSize.mockReturnValue(0)
+      ensureSiteCachePopulated.mockResolvedValue(false)
+      mockFetchAlerts.mockResolvedValue({
+        member: [
+          {
+            samplingPointId: 1234,
+            siteId: 'UKA00339',
+            region: 'England',
+            pollutant: 'O3',
+            alertText: 'tbc',
+            concentration: 100,
+            alertThreshold: null,
+            alertLevel: true,
+            validationStatus: 2
+          }
+        ]
+      })
+
+      const alertDetailsColl = {
+        find: vi.fn().mockReturnValue({
+          project: vi.fn().mockReturnValue({
+            toArray: vi.fn().mockResolvedValue([])
+          })
+        }),
+        updateOne: vi.fn().mockResolvedValue({})
+      }
+      mockDb.collection.mockImplementation((name) => {
+        if (name === 'pollutant-alert-processing-state') return alertDetailsColl
+        return null
+      })
+
+      await processPollutantAlerts(mockDb)
+
+      expect(ensureSiteCachePopulated).toHaveBeenCalled()
+      expect(mockSendNotification).not.toHaveBeenCalled()
+      expect(alertDetailsColl.updateOne).not.toHaveBeenCalled()
     })
   })
 })

@@ -5,6 +5,9 @@ import { createLogger } from '../../common/helpers/logging/logger.js'
 import { maskPhoneNumber, maskEmail, maskTemplateId } from './maskingUtils.js'
 
 const logger = createLogger()
+// Cap how much of an upstream error body we log / surface in err.message, so a
+// large error/HTML body can't flood the logs on every failed notification.
+const ERROR_BODY_LOG_LIMIT = 200
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -49,34 +52,37 @@ async function handleNotifyResponse(response, finalRequestId, startTime) {
       requestId: finalRequestId,
       status: response.status,
       statusText: response.statusText,
-      duration,
-      headers: Object.fromEntries(response.headers.entries())
+      duration
     })}`
   )
 
   if (!response.ok) {
     const errorText = await response.text()
+    const errorSnippet = errorText.slice(0, ERROR_BODY_LOG_LIMIT)
     logger.error(
       `Notification service returned error response ${JSON.stringify({
         requestId: finalRequestId,
         status: response.status,
         statusText: response.statusText,
-        errorText,
+        errorSnippet,
         duration
       })}`
     )
     throw new Error(
-      `Notification service error: ${response.status} - ${errorText}`
+      `Notification service error: ${response.status} - ${errorSnippet}`
     )
   }
 
   const responseBody = await parseResponseBody(response, finalRequestId)
 
+  // Log only the notificationId, not the whole Notify response body — the body
+  // echoes the rendered message content (SMS/email text), which we must not
+  // write to logs (PII), and it adds noise on every successful send.
   logger.info(
     `Notification service call completed successfully ${JSON.stringify({
       requestId: finalRequestId,
       duration,
-      responseBody
+      notificationId: responseBody?.notificationId ?? null
     })}`
   )
 

@@ -130,7 +130,7 @@ const config = convict({
     serviceUrl: {
       doc: 'Notification service URL',
       format: String,
-      default: 'http://localhost:3000/send-notification',
+      default: 'http://localhost:3005/send-notification',
       env: 'NOTIFICATION_SERVICE_URL'
     },
     templates: {
@@ -149,7 +149,8 @@ const config = convict({
       unsubscribeEmailLink: {
         doc: 'Unsubscribe email link (frontend URL)',
         format: String,
-        default: '',
+        default:
+          'https://aqie-front-end.test.cdp-int.defra.cloud/notify/unsubscribe-email-link',
         env: 'UNSUBSCRIBE_EMAIL_LINK'
       }
     }
@@ -158,19 +159,19 @@ const config = convict({
     loginUrl: {
       doc: 'Ricardo API login URL for token generation',
       format: String,
-      default: 'https://uk-air-api.staging.rcdo.co.uk/api/login_check',
+      default: 'https://api-ukair.defra.gov.uk/api/login_check',
       env: 'RICARDO_API_LOGIN_URL'
     },
     alertsUrl: {
       doc: 'Ricardo API AQSR alerts endpoint',
       format: String,
-      default: 'https://uk-air-api.staging.rcdo.co.uk/api/aqsr_alerts',
+      default: 'https://api-ukair.defra.gov.uk/api/aqsr_alerts',
       env: 'RICARDO_API_ALERTS_URL'
     },
     daqiAlertsUrl: {
       doc: 'Ricardo API DAQI alerts endpoint',
       format: String,
-      default: 'https://uk-air-api.staging.rcdo.co.uk/api/daqi_alerts',
+      default: 'https://api-ukair.defra.gov.uk/api/daqi_alerts',
       env: 'RICARDO_API_DAQI_ALERTS_URL'
     },
     email: {
@@ -187,10 +188,16 @@ const config = convict({
       sensitive: true
     },
     cronSchedule: {
-      doc: 'Cron expression for the pollutant alert job (default: every 30 minutes)',
+      doc: 'Cron expression for the pollutant alert job (default: every 15 minutes)',
       format: String,
       default: '*/15 * * * *',
       env: 'POLLUTANT_CRON_SCHEDULE'
+    },
+    daqiCronSchedule: {
+      doc: 'Cron expression for the DAQI alert job (default: every 15 minutes)',
+      format: String,
+      default: '*/15 * * * *',
+      env: 'DAQI_ALERT_CRON_SCHEDULE'
     },
     useMock: {
       doc: 'Use mock Ricardo API response instead of making real HTTP calls (for local testing)',
@@ -201,7 +208,7 @@ const config = convict({
     siteMetaDataUrl: {
       doc: 'Ricardo API site metadata endpoint (used to map siteId → region)',
       format: String,
-      default: 'https://uk-air-api.staging.rcdo.co.uk/api/site_meta_datas',
+      default: 'https://api-ukair.defra.gov.uk/api/site_meta_datas',
       env: 'RICARDO_API_SITE_METADATA_URL'
     }
   },
@@ -237,6 +244,32 @@ const config = convict({
       env: 'CHECK_AIR_QUALITY_LINK'
     }
   },
+  daqiAlertTemplates: {
+    smsAlert: {
+      doc: 'SMS alert template ID for DAQI alerts (English)',
+      format: String,
+      default: '36c1bc0e-cc1e-4ed1-81cc-8e6bb3cb60de',
+      env: 'SMS_DAQI_ALERT_TEMPLATE_ID'
+    },
+    smsAlertCy: {
+      doc: 'SMS alert template ID for DAQI alerts (Welsh)',
+      format: String,
+      default: '',
+      env: 'SMS_DAQI_ALERT_CY_TEMPLATE_ID'
+    },
+    emailAlert: {
+      doc: 'Email alert template ID for DAQI alerts (English)',
+      format: String,
+      default: 'f4060bf7-0798-42e0-b02c-fe50a1e4e9e1',
+      env: 'EMAIL_DAQI_ALERT_TEMPLATE_ID'
+    },
+    emailAlertCy: {
+      doc: 'Email alert template ID for DAQI alerts (Welsh)',
+      format: String,
+      default: '',
+      env: 'EMAIL_DAQI_ALERT_CY_TEMPLATE_ID'
+    }
+  },
   forecastAlertTemplates: {
     smsAlert: {
       doc: 'SMS forecast alert template ID (English)',
@@ -267,7 +300,7 @@ const config = convict({
     forecastApiUrl: {
       doc: 'Base URL for the aqie-forecast-api service',
       format: String,
-      default: 'http://localhost:3005',
+      default: 'http://localhost:3000',
       env: 'FORECAST_API_URL'
     },
     daqiAlertThreshold: {

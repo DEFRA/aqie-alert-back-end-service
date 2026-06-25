@@ -19,6 +19,7 @@ The AQIE (Air Quality Information Exchange) Alert Back-End Service manages air q
 | `DELETE` | `/opt-out-sms-alert`   | Unsubscribe an SMS user                                               |
 | `DELETE` | `/opt-out-email-alert` | Unsubscribe an email user                                             |
 | `GET`    | `/aqsr-alert`          | Query AQSR breach alerts by current location (lat/long) or date range |
+| `GET`    | `/daqi-alert`          | Query DAQI breach alerts for the region resolved from lat/long        |
 
 ---
 
@@ -280,6 +281,95 @@ The frontend can treat any non-2xx as "hide the alert banner" without parsing th
 
 ---
 
+## GET /daqi-alert
+
+Returns active DAQI (Daily Air Quality Index) breach alerts for the region resolved from the supplied coordinates. Used by the front-end to surface "high air quality index" warnings for a user's current location.
+
+**Query Parameters:**
+
+| Parameter | Type   | Required | Description                        |
+| --------- | ------ | -------- | ---------------------------------- |
+| `lat`     | number | Yes      | Latitude of the location to check  |
+| `long`    | number | Yes      | Longitude of the location to check |
+
+**Example:**
+
+```
+GET /daqi-alert?lat=51.4818&long=-3.1763
+```
+
+**How it works:**
+
+1. `lat`/`long` are resolved to a UK region via the 3-step GeoJSON boundary lookup (polygon → bounding-box → nearest centroid)
+2. The site-region cache is checked. If it's empty, an on-demand refresh is attempted; if that fails the endpoint returns `[]` rather than mask the cache outage as "no alerts"
+3. The Ricardo DAQI feed is fetched with `start-date` = yesterday's UK-local date (`Europe/London`) and `end-date` = today's UK-local date (both `yyyy-mm-dd`), narrowing the upstream response to the rolling 24-hour window
+4. Members are filtered to those where:
+   - `daqi >= threshold` (default `7`, configurable via `DAQI_ALERT_THRESHOLD`)
+   - `validationStatus === 2` (Ricardo's "validated" flag)
+   - The alert date is within the last 24 hours (precise millisecond check)
+   - `getRegionForSite(siteId)` matches the region resolved in step 1 (region is always derived from `siteId` via the cache, never from Ricardo's coarse `region` field)
+5. The result is sorted by `date` descending — newest alerts first
+
+### Response
+
+**200 OK** — array of alert objects (empty array when no alerts match):
+
+```json
+[
+  {
+    "active-breaches": true,
+    "pollutant-name": "nitrogen dioxide (NO2)",
+    "daqi": 7,
+    "samplingPointId": 12340,
+    "siteId": "UKA00212",
+    "alert-started": "2026-05-20T03:00:00+01:00"
+  }
+]
+```
+
+**Response fields:**
+
+| Field             | Type           | Description                                                                                                 |
+| ----------------- | -------------- | ----------------------------------------------------------------------------------------------------------- |
+| `active-breaches` | boolean        | Always `true` — by the time the alert reaches this array it has passed the 24h + threshold + region filters |
+| `pollutant-name`  | string         | Human-readable pollutant name e.g. `"ozone (O3)"`, `"nitrogen dioxide (NO2)"`                               |
+| `daqi`            | number         | The DAQI index value reported by Ricardo (≥ threshold)                                                      |
+| `samplingPointId` | number \| null | Ricardo's sampling point identifier                                                                         |
+| `siteId`          | string \| null | Ricardo's monitoring site code (e.g. `"UKA00212"`)                                                          |
+| `alert-started`   | string         | ISO 8601 timestamp when the alert was recorded by Ricardo                                                   |
+
+### Empty array scenarios (200 OK)
+
+The endpoint always returns `200` even when there are no results. An empty array `[]` is returned in these cases:
+
+| Scenario                                                                    |
+| --------------------------------------------------------------------------- |
+| `lat`/`long` resolve to "Unknown" (outside known UK regions)                |
+| The site cache is empty and an on-demand refresh attempt failed             |
+| Ricardo returned no members for the date window                             |
+| No members passed the `daqi >= threshold` + `validationStatus === 2` filter |
+| All matching members are older than 24 hours                                |
+| No matching member's site resolves to the caller's region                   |
+
+### Validation errors (400)
+
+| Condition                          | Message                              |
+| ---------------------------------- | ------------------------------------ |
+| `lat` or `long` missing            | `lat and long are required`          |
+| `lat` or `long` not a valid number | `lat and long must be valid numbers` |
+
+### Upstream error responses
+
+Errors from the Ricardo DAQI API are **passed through with the original status code** so failures can be diagnosed without inspecting server logs. The response body always includes an `upstreamStatus` field carrying the original code (or `null` when the call never reached upstream). Same pattern as `/aqsr-alert` — the service name in the message changes to `"DAQI alert service"`.
+
+| Ricardo returns                       | This API returns  | Body                                                                                                                     |
+| ------------------------------------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| 4xx (e.g. 401, 403, 404, 429)         | same 4xx          | `{ statusCode, error, message: "DAQI alert service rejected the request", upstreamStatus: <original> }`                  |
+| 5xx (e.g. 500, 502, 503, 504)         | same 5xx          | `{ statusCode, error, message: "DAQI alert service upstream error", upstreamStatus: <original> }`                        |
+| Network error / timeout / no response | `502 Bad Gateway` | `{ statusCode: 502, error: "Bad Gateway", message: "DAQI alert service temporarily unavailable", upstreamStatus: null }` |
+
+---
+
 ## Data Models
 
 ### USERS Collection
@@ -342,20 +432,33 @@ One document per unique `user_contact` (normalized phone number or lowercase ema
 
 ### Pollutant Alert Scheduler
 
-| Variable                        | Default                                                     | Description                                                                                                                                                                     |
-| ------------------------------- | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `RICARDO_API_EMAIL`             | _(set in config)_                                           | Ricardo API login email                                                                                                                                                         |
-| `RICARDO_API_PASSWORD`          | _(set in config)_                                           | Ricardo API login password                                                                                                                                                      |
-| `RICARDO_API_LOGIN_URL`         | `https://uk-air-api.staging.rcdo.co.uk/api/login_check`     | Ricardo login endpoint                                                                                                                                                          |
-| `RICARDO_API_ALERTS_URL`        | `https://uk-air-api.staging.rcdo.co.uk/api/aqsr_alerts`     | Ricardo AQSR alerts endpoint                                                                                                                                                    |
-| `RICARDO_API_SITE_METADATA_URL` | `https://uk-air-api.staging.rcdo.co.uk/api/site_meta_datas` | Ricardo site metadata endpoint (used to build region cache)                                                                                                                     |
-| `POLLUTANT_CRON_SCHEDULE`       | `*/30 * * * *`                                              | Cron expression for the pollutant alert polling job                                                                                                                             |
-| `RICARDO_API_USE_MOCK`          | `false`                                                     | When `true`, `fetchAlerts` returns hardcoded mock data. `getAccessToken` and `fetchSiteMetaData` always call the real API so the site-region cache is populated with live data. |
-| `SMS_ALERT_TEMPLATE_ID`         | _(set in config)_                                           | SMS pollutant alert Notify template (English)                                                                                                                                   |
-| `SMS_ALERT_CY_TEMPLATE_ID`      | _(set in config)_                                           | SMS pollutant alert Notify template (Welsh)                                                                                                                                     |
-| `EMAIL_ALERT_TEMPLATE_ID`       | _(set in config)_                                           | Email pollutant alert Notify template (English)                                                                                                                                 |
-| `EMAIL_ALERT_CY_TEMPLATE_ID`    | _(set in config)_                                           | Email pollutant alert Notify template (Welsh)                                                                                                                                   |
-| `CHECK_AIR_QUALITY_LINK`        | `https://check-air-quality.service.gov.uk/location/`        | Base URL for the "check air quality" link in alert notifications                                                                                                                |
+| Variable                        | Default                                              | Description                                                                                                                                                                     |
+| ------------------------------- | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `RICARDO_API_EMAIL`             | _(set in config)_                                    | Ricardo API login email                                                                                                                                                         |
+| `RICARDO_API_PASSWORD`          | _(set in config)_                                    | Ricardo API login password                                                                                                                                                      |
+| `RICARDO_API_LOGIN_URL`         | `https://api-ukair.defra.gov.uk/api/login_check`     | Ricardo login endpoint                                                                                                                                                          |
+| `RICARDO_API_ALERTS_URL`        | `https://api-ukair.defra.gov.uk/api/aqsr_alerts`     | Ricardo AQSR alerts endpoint                                                                                                                                                    |
+| `RICARDO_API_SITE_METADATA_URL` | `https://api-ukair.defra.gov.uk/api/site_meta_datas` | Ricardo site metadata endpoint (used to build region cache)                                                                                                                     |
+| `POLLUTANT_CRON_SCHEDULE`       | `*/15 * * * *`                                       | Cron expression for the pollutant alert polling job (every 15 minutes)                                                                                                          |
+| `RICARDO_API_USE_MOCK`          | `true`                                               | When `true`, `fetchAlerts` returns hardcoded mock data. `getAccessToken` and `fetchSiteMetaData` always call the real API so the site-region cache is populated with live data. |
+| `SMS_ALERT_TEMPLATE_ID`         | _(set in config)_                                    | SMS pollutant alert Notify template (English)                                                                                                                                   |
+| `SMS_ALERT_CY_TEMPLATE_ID`      | _(set in config)_                                    | SMS pollutant alert Notify template (Welsh)                                                                                                                                     |
+| `EMAIL_ALERT_TEMPLATE_ID`       | _(set in config)_                                    | Email pollutant alert Notify template (English)                                                                                                                                 |
+| `EMAIL_ALERT_CY_TEMPLATE_ID`    | _(set in config)_                                    | Email pollutant alert Notify template (Welsh)                                                                                                                                   |
+| `CHECK_AIR_QUALITY_LINK`        | `https://check-air-quality.service.gov.uk/location/` | Base URL for the "check air quality" link in alert notifications                                                                                                                |
+
+### DAQI Alert Scheduler
+
+| Variable                          | Default                                          | Description                                                       |
+| --------------------------------- | ------------------------------------------------ | ----------------------------------------------------------------- |
+| `RICARDO_API_DAQI_ALERTS_URL`     | `https://api-ukair.defra.gov.uk/api/daqi_alerts` | Ricardo API DAQI alerts endpoint                                  |
+| `DAQI_ALERT_CRON_SCHEDULE`        | `*/15 * * * *`                                   | Cron expression for the DAQI alert polling job (every 15 minutes) |
+| `SMS_DAQI_ALERT_TEMPLATE_ID`      | _(set in config)_                                | SMS DAQI alert Notify template (English)                          |
+| `SMS_DAQI_ALERT_CY_TEMPLATE_ID`   | _(set in config)_                                | SMS DAQI alert Notify template (Welsh)                            |
+| `EMAIL_DAQI_ALERT_TEMPLATE_ID`    | _(set in config)_                                | Email DAQI alert Notify template (English)                        |
+| `EMAIL_DAQI_ALERT_CY_TEMPLATE_ID` | _(set in config)_                                | Email DAQI alert Notify template (Welsh)                          |
+
+The DAQI alert flow reuses `DAQI_ALERT_THRESHOLD` (from the MetOffice Forecast section below) since "what counts as high" is the same for both flows.
 
 ### MetOffice Forecast Alert Scheduler
 

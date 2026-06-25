@@ -1,7 +1,12 @@
-import { fetchAlerts } from './ricardoApiClient.js'
+import { fetchDaqiAlerts } from './ricardoApiClient.js'
 import { sendNotification } from './notifyServiceClient.js'
 import { getRegionForSite } from './ricardoSiteAndRegionCache.js'
 import { formatLocationForUrl } from './locationUtils.js'
+import {
+  cleanPollutantName,
+  formatPollutantName
+} from './pollutantAlertProcessor.js'
+import { getRollingDayWindow } from './dateRangeUtils.js'
 import {
   collapseInCycleDuplicates,
   ensureCacheReadyForCycle,
@@ -13,37 +18,14 @@ import { createLogger } from '../../common/helpers/logging/logger.js'
 import { DB_ERROR_CODE } from './constants.js'
 
 const logger = createLogger()
-const POLLUTANT_ALERT_STATUS_COLLECTION = 'pollutant-alert-processing-state'
+const DAQI_ALERT_STATUS_COLLECTION = 'daqi-alert-processing-state'
+const DAQI_ALERTS_AUDIT_COLLECTION = 'daqi-alerts-audit'
 
-function cleanPollutantName(pollutant) {
-  return pollutant.replaceAll(/<[^>]{0,200}>/g, '')
+function buildAlertKey(member) {
+  return `${member.samplingPointId}-${member.siteId}-${member.date}`
 }
 
-const POLLUTANT_NAME_MAP = {
-  O3: 'ozone',
-  NO2: 'nitrogen dioxide',
-  SO2: 'sulphur dioxide',
-  CO: 'carbon monoxide',
-  PM10: 'PM10',
-  'PM2.5': 'PM2.5',
-  NO: 'nitrogen monoxide',
-  C6H6: 'benzene',
-  Pb: 'lead',
-  '1,3-BD': '1,3-butadiene'
-}
-
-function formatPollutantName(pollutant) {
-  const cleaned = cleanPollutantName(pollutant)
-  const match = cleaned.match(/\(([^)]{1,20})\)/)
-  if (!match) {
-    return cleaned
-  }
-  const code = match[1]
-  const name = POLLUTANT_NAME_MAP[code]
-  return name ? `${name} (${code})` : cleaned
-}
-
-function filterValidAlerts(members) {
+function filterValidDaqiAlerts(members, threshold) {
   // Note: Ricardo's own `region` field is deliberately NOT carried through.
   // Region is always resolved from siteId via the GeoJSON-backed site cache in
   // processAlertForUsers, because Ricardo's region is coarse (it does not
@@ -52,66 +34,97 @@ function filterValidAlerts(members) {
   return members
     .filter(
       (item) =>
+        item.daqi >= threshold &&
         item.validationStatus === 2 &&
-        (item.alertLevel === true || item.informationLevel === true)
+        item.samplingPointId !== undefined &&
+        item.siteId &&
+        item.date
     )
     .map((item) => ({
-      'alert-id': item.samplingPointId,
+      'alert-id': buildAlertKey(item),
+      samplingPointId: item.samplingPointId,
       siteId: item.siteId,
-      pollutant: item.pollutant,
-      alertText: item.alertText,
-      concentration: item.concentration,
-      alertThreshold: item.alertThreshold
+      date: item.date,
+      daqi: item.daqi,
+      level: item.level,
+      pollutant: item.pollutant
     }))
 }
 
-async function getAlreadyProcessedAlertIds(db) {
+async function getAlreadyProcessedAlertKeys(db) {
   const existing = await db
-    .collection(POLLUTANT_ALERT_STATUS_COLLECTION)
-    .find({ status: { $in: ['in-progress', 'processed'] } })
-    .project({ 'alert-id': 1 })
+    .collection(DAQI_ALERT_STATUS_COLLECTION)
+    .find({ 'process-status': { $in: ['in-progress', 'processed'] } })
+    .project({ samplingPointId: 1, siteId: 1, date: 1 })
     .toArray()
-  return new Set(existing.map((doc) => doc['alert-id']))
+  return new Set(
+    existing.map((doc) => `${doc.samplingPointId}-${doc.siteId}-${doc.date}`)
+  )
 }
 
 async function markAlertInProgress(db, alertDetail) {
-  await db.collection(POLLUTANT_ALERT_STATUS_COLLECTION).updateOne(
-    { 'alert-id': alertDetail['alert-id'] },
+  await db.collection(DAQI_ALERT_STATUS_COLLECTION).updateOne(
+    {
+      samplingPointId: alertDetail.samplingPointId,
+      siteId: alertDetail.siteId,
+      date: alertDetail.date
+    },
     {
       $set: {
         'alert-id': alertDetail['alert-id'],
+        samplingPointId: alertDetail.samplingPointId,
+        siteId: alertDetail.siteId,
+        date: alertDetail.date,
+        daqi: alertDetail.daqi,
         region: alertDetail.region,
         pollutant: alertDetail.pollutant,
-        alertText: alertDetail.alertText,
-        concentration: alertDetail.concentration,
-        alertThreshold: alertDetail.alertThreshold,
-        status: 'in-progress',
-        createdAt: new Date()
+        'process-status': 'in-progress',
+        'alert-started-timestamp': new Date()
       }
     },
     { upsert: true }
   )
 }
 
-async function insertPollutantAuditEntry(db, alertDetail, userMatch) {
+async function markAlertProcessed(db, alertDetail) {
+  await db.collection(DAQI_ALERT_STATUS_COLLECTION).updateOne(
+    {
+      samplingPointId: alertDetail.samplingPointId,
+      siteId: alertDetail.siteId,
+      date: alertDetail.date
+    },
+    {
+      $set: {
+        'process-status': 'processed',
+        processedAt: new Date()
+      }
+    }
+  )
+}
+
+async function insertDaqiAuditEntry(db, alertDetail, userMatch) {
   const entry = {
     'alert-id': alertDetail['alert-id'],
+    samplingPointId: alertDetail.samplingPointId,
+    siteId: alertDetail.siteId,
+    date: alertDetail.date,
+    daqi: alertDetail.daqi,
     region: alertDetail.region,
     pollutant: cleanPollutantName(alertDetail.pollutant),
     user_contact: userMatch.userContact,
     alertType: userMatch.alertType,
     lang: userMatch.lang,
     location: userMatch.location,
-    'pollutant-alert-status': 'not-processed',
+    'daqi-alert-status': 'not-processed',
     notificationId: null,
     timestamp: new Date()
   }
   try {
-    await db.collection('pollutant-alerts-audit').insertOne(entry)
+    await db.collection(DAQI_ALERTS_AUDIT_COLLECTION).insertOne(entry)
   } catch (err) {
     if (err.code === DB_ERROR_CODE) {
       logger.warn(
-        `[Pollutant] Duplicate audit entry skipped ${JSON.stringify({ 'alert-id': alertDetail['alert-id'], user_contact: userMatch.userContact, location: userMatch.location })}`
+        `[DAQI] Duplicate audit entry skipped ${JSON.stringify({ 'alert-id': alertDetail['alert-id'], user_contact: userMatch.userContact, location: userMatch.location })}`
       )
     } else {
       throw err
@@ -120,36 +133,24 @@ async function insertPollutantAuditEntry(db, alertDetail, userMatch) {
   return entry
 }
 
-async function updatePollutantAuditEntry(
+async function updateDaqiAuditEntry(
   db,
   alertId,
   userContact,
   location,
   notificationId
 ) {
-  await db.collection('pollutant-alerts-audit').updateOne(
+  await db.collection(DAQI_ALERTS_AUDIT_COLLECTION).updateOne(
     {
       'alert-id': alertId,
       user_contact: userContact,
       location,
-      'pollutant-alert-status': 'not-processed'
+      'daqi-alert-status': 'not-processed'
     },
     {
       $set: {
-        'pollutant-alert-status': 'processed',
+        'daqi-alert-status': 'processed',
         notificationId
-      }
-    }
-  )
-}
-
-async function markAlertProcessed(db, alertId) {
-  await db.collection(POLLUTANT_ALERT_STATUS_COLLECTION).updateOne(
-    { 'alert-id': alertId },
-    {
-      $set: {
-        status: 'processed',
-        processedAt: new Date()
       }
     }
   )
@@ -159,12 +160,12 @@ function getTemplateId(alertType, lang) {
   const isWelsh = lang === 'cy'
   if (alertType === 'sms') {
     return isWelsh
-      ? config.get('alertTemplates.smsAlertCy')
-      : config.get('alertTemplates.smsAlert')
+      ? config.get('daqiAlertTemplates.smsAlertCy')
+      : config.get('daqiAlertTemplates.smsAlert')
   }
   return isWelsh
-    ? config.get('alertTemplates.emailAlertCy')
-    : config.get('alertTemplates.emailAlert')
+    ? config.get('daqiAlertTemplates.emailAlertCy')
+    : config.get('daqiAlertTemplates.emailAlert')
 }
 
 async function sendAlertToUser(userMatch, alertDetail) {
@@ -181,7 +182,7 @@ async function sendAlertToUser(userMatch, alertDetail) {
     alertId: String(alertDetail['alert-id']),
     personalisation: {
       location: userMatch.location,
-      concentration: String(alertDetail.concentration),
+      daqi: String(alertDetail.daqi),
       Pollutant: formatPollutantName(alertDetail.pollutant),
       checkAirQualityLink
     }
@@ -197,11 +198,10 @@ async function sendAlertToUser(userMatch, alertDetail) {
     payload.personalisation.unsubscribeLink = `${unsubscribeBaseUrl}?email=${encodeURIComponent(userMatch.userContact)}`
   }
 
-  const requestId = `alert-${alertDetail['alert-id']}-${Date.now()}`
+  const requestId = `daqi-alert-${alertDetail['alert-id']}-${Date.now()}`
   const responseBody = await sendNotification(payload, requestId)
 
-  const notificationId = responseBody?.notificationId ?? null
-  return notificationId
+  return responseBody?.notificationId ?? null
 }
 
 async function processAlertForUsers(db, alertDetail) {
@@ -212,8 +212,8 @@ async function processAlertForUsers(db, alertDetail) {
       // is unknown. We never trust Ricardo's coarse region, so without a cache
       // hit we cannot reliably match users — skip and leave it unprocessed so a
       // later cycle can retry once the site appears in the cache.
-      logger.warn(
-        `[Pollutant] Alert ${alertDetail['alert-id']}: siteId "${alertDetail.siteId}" not found in site cache; cannot resolve region, skipping`
+      logger.info(
+        `[DAQI] Alert ${alertDetail['alert-id']}: siteId "${alertDetail.siteId}" not found in site cache; cannot resolve region, skipping`
       )
       return
     }
@@ -228,82 +228,80 @@ async function processAlertForUsers(db, alertDetail) {
 
     const matchedUsers = getMatchingUsers(users, resolvedDetail.region)
     logger.info(
-      `[Pollutant] Alert ${resolvedDetail['alert-id']}: matched ${matchedUsers.length} user-location pairs in region "${resolvedDetail.region}"`
+      `[DAQI] Alert ${resolvedDetail['alert-id']}: matched ${matchedUsers.length} user-location pairs in region "${resolvedDetail.region}"`
     )
 
     const allSent = await sendNotificationsToUsers({
       db,
       alertDetail: resolvedDetail,
       matchedUsers,
-      logPrefix: '[Pollutant]',
-      insertAuditEntry: insertPollutantAuditEntry,
-      updateAuditEntry: updatePollutantAuditEntry,
+      logPrefix: '[DAQI]',
+      insertAuditEntry: insertDaqiAuditEntry,
+      updateAuditEntry: updateDaqiAuditEntry,
       sendAlert: sendAlertToUser
     })
 
     if (allSent) {
-      await markAlertProcessed(db, resolvedDetail['alert-id'])
+      await markAlertProcessed(db, resolvedDetail)
       logger.info(
-        `[Pollutant] Alert ${resolvedDetail['alert-id']} marked as processed`
+        `[DAQI] Alert ${resolvedDetail['alert-id']} marked as processed`
       )
     }
   } catch (err) {
     logger.error(
-      `[Pollutant] Error processing alert ${alertDetail['alert-id']} ${JSON.stringify({ error: err.message })}`
+      `[DAQI] Error processing alert ${alertDetail['alert-id']} ${JSON.stringify({ error: err.message })}`
     )
   }
 }
 
-async function fetchPollutantAlertsForCycle() {
+async function fetchDaqiAlertsForCycle() {
+  const { startDate, endDate } = getRollingDayWindow()
   try {
-    return await fetchAlerts()
+    return await fetchDaqiAlerts({ startDate, endDate })
   } catch (err) {
     logger.error(
-      `[Pollutant] Failed to fetch Ricardo alerts ${JSON.stringify({ upstreamStatus: err.status ?? null, error: err.message })}`
+      `[DAQI] Failed to fetch Ricardo DAQI alerts ${JSON.stringify({ upstreamStatus: err.status ?? null, error: err.message })}`
     )
     return null
   }
 }
 
-export async function processPollutantAlerts(db) {
-  logger.info('[Pollutant] Starting pollutant alert processing cycle')
+export async function processDaqiAlerts(db) {
+  logger.info('[DAQI] Starting DAQI alert processing cycle')
 
-  const alertData = await fetchPollutantAlertsForCycle()
+  const alertData = await fetchDaqiAlertsForCycle()
   if (!alertData) {
     return
   }
 
   const members = alertData.member ?? []
   if (members.length === 0) {
-    logger.info('[Pollutant] No alert members returned from Ricardo API')
+    logger.info('[DAQI] No alert members returned from Ricardo DAQI API')
     return
   }
 
-  const validAlerts = filterValidAlerts(members)
+  const threshold = config.get('metOfficeForecast.daqiAlertThreshold')
+  const validAlerts = filterValidDaqiAlerts(members, threshold)
   logger.info(
-    `[Pollutant] Filtered ${validAlerts.length} valid alerts from ${members.length} total`
+    `[DAQI] Filtered ${validAlerts.length} valid alerts from ${members.length} total (daqi>=${threshold}, validationStatus=2)`
   )
   if (validAlerts.length === 0) {
-    logger.info(
-      '[Pollutant] No alerts matching alertLevel=true and validationStatus=2'
-    )
     return
   }
 
-  const processedIds = await getAlreadyProcessedAlertIds(db)
+  const processedKeys = await getAlreadyProcessedAlertKeys(db)
   const newAlerts = validAlerts.filter(
-    (alert) => !processedIds.has(alert['alert-id'])
+    (alert) => !processedKeys.has(alert['alert-id'])
   )
   const uniqueNewAlerts = collapseInCycleDuplicates(newAlerts)
 
   logger.info(
-    `[Pollutant] ${uniqueNewAlerts.length} unique alerts to process (${newAlerts.length - uniqueNewAlerts.length} duplicate rows collapsed, ${processedIds.size} already processed in prior cycles)`
+    `[DAQI] ${uniqueNewAlerts.length} unique alerts to process (${newAlerts.length - uniqueNewAlerts.length} duplicate rows collapsed, ${processedKeys.size} already processed in prior cycles)`
   )
   if (uniqueNewAlerts.length === 0) {
     return
   }
-
-  if (!(await ensureCacheReadyForCycle('[Pollutant]'))) {
+  if (!(await ensureCacheReadyForCycle('[DAQI]'))) {
     return
   }
 
@@ -311,16 +309,15 @@ export async function processPollutantAlerts(db) {
     await processAlertForUsers(db, alertDetail)
   }
 
-  logger.info('[Pollutant] Pollutant alert processing cycle completed')
+  logger.info('[DAQI] DAQI alert processing cycle completed')
 }
 
 export {
-  filterValidAlerts,
+  filterValidDaqiAlerts,
   getMatchingUsers,
-  cleanPollutantName,
-  formatPollutantName,
-  getAlreadyProcessedAlertIds,
+  getAlreadyProcessedAlertKeys,
   markAlertInProgress,
   markAlertProcessed,
-  sendAlertToUser
+  sendAlertToUser,
+  buildAlertKey
 }
