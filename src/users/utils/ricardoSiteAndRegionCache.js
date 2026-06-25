@@ -36,16 +36,39 @@ function alertIfCacheEmpty(phase) {
   }
 }
 
-async function refreshCache() {
-  let siteData
+// Maps a single Ricardo site row to a cache entry. Returns null when the row
+// can't be used (missing fields, or coordinates outside known UK regions).
+function mapSiteToCacheEntry({ siteId, latitude, longitude, siteName }) {
+  if (!siteId || latitude == null || longitude == null) {
+    return null
+  }
+  const region = findRegion(
+    Number.parseFloat(latitude),
+    Number.parseFloat(longitude)
+  )
+  if (region === 'Unknown') {
+    logger.warn(
+      `[SiteCache] Could not determine region for site ${JSON.stringify({ siteId, latitude, longitude })}`
+    )
+    return null
+  }
+  return { region, monitoringStationName: siteName ?? null }
+}
+
+async function fetchSiteMetaDataForRefresh() {
   try {
-    siteData = await fetchSiteMetaData()
+    return await fetchSiteMetaData()
   } catch (err) {
     logger.error(
       `[SiteCache] Failed to fetch site metadata ${JSON.stringify({ upstreamStatus: err.status ?? null, error: err.message })}`
     )
-    return
+    return null
   }
+}
+
+async function refreshCache() {
+  const siteData = await fetchSiteMetaDataForRefresh()
+  if (!siteData) return
 
   const members = siteData.member ?? []
   if (members.length === 0) {
@@ -61,26 +84,13 @@ async function refreshCache() {
   let populated = 0
   let skipped = 0
 
-  for (const { siteId, latitude, longitude, siteName } of members) {
-    if (!siteId || latitude == null || longitude == null) {
-      skipped++
+  for (const member of members) {
+    const entry = mapSiteToCacheEntry(member)
+    if (entry) {
+      nextMap.set(member.siteId, entry)
+      populated++
     } else {
-      const region = findRegion(
-        Number.parseFloat(latitude),
-        Number.parseFloat(longitude)
-      )
-      if (region === 'Unknown') {
-        logger.warn(
-          `[SiteCache] Could not determine region for site ${JSON.stringify({ siteId, latitude, longitude })}`
-        )
-        skipped++
-      } else {
-        nextMap.set(siteId, {
-          region,
-          monitoringStationName: siteName ?? null
-        })
-        populated++
-      }
+      skipped++
     }
   }
 

@@ -278,18 +278,59 @@ async function processAlertForUsers(db, alertDetail) {
   }
 }
 
-export async function processPollutantAlerts(db) {
-  logger.info('[Pollutant] Starting pollutant alert processing cycle')
+// Ricardo returns one row per hourly breach, so the same samplingPointId
+// (== alert-id) can appear multiple times in a single response. Without
+// collapsing here, every row would call sendAlertToUser even though the
+// audit unique index `{alert-id, user_contact, location}` rejects the
+// second insert — resulting in duplicate Notify calls. Keep the first
+// occurrence per alert-id; Ricardo orders newest-first, so that's the most
+// recent measurement.
+function collapseInCycleDuplicates(alerts) {
+  const seen = new Set()
+  const unique = []
+  for (const alert of alerts) {
+    if (!seen.has(alert['alert-id'])) {
+      seen.add(alert['alert-id'])
+      unique.push(alert)
+    }
+  }
+  return unique
+}
 
-  let alertData
+// Region resolution depends entirely on the site cache. If it's empty the
+// startup fetch likely failed — try one on-demand refresh, and skip the cycle
+// rather than skipping every alert one by one. Returns true when the cache is
+// usable, false when the caller should abort the cycle.
+async function ensureCacheReadyForCycle() {
+  if (getSiteCacheSize() > 0) {
+    return true
+  }
+  const populated = await ensureSiteCachePopulated()
+  if (populated) {
+    return true
+  }
+  logger.info(
+    '[Pollutant] Site cache empty and refresh failed; skipping cycle (will retry on next run)'
+  )
+  return false
+}
+
+async function fetchPollutantAlertsForCycle() {
   try {
-    alertData = await fetchAlerts()
+    return await fetchAlerts()
   } catch (err) {
     logger.error(
       `[Pollutant] Failed to fetch Ricardo alerts ${JSON.stringify({ upstreamStatus: err.status ?? null, error: err.message })}`
     )
-    return
+    return null
   }
+}
+
+export async function processPollutantAlerts(db) {
+  logger.info('[Pollutant] Starting pollutant alert processing cycle')
+
+  const alertData = await fetchPollutantAlertsForCycle()
+  if (!alertData) return
 
   const members = alertData.member ?? []
   if (members.length === 0) {
@@ -301,7 +342,6 @@ export async function processPollutantAlerts(db) {
   logger.info(
     `[Pollutant] Filtered ${validAlerts.length} valid alerts from ${members.length} total`
   )
-
   if (validAlerts.length === 0) {
     logger.info(
       '[Pollutant] No alerts matching alertLevel=true and validationStatus=2'
@@ -313,43 +353,14 @@ export async function processPollutantAlerts(db) {
   const newAlerts = validAlerts.filter(
     (alert) => !processedIds.has(alert['alert-id'])
   )
-
-  // Ricardo returns one row per hourly breach, so the same samplingPointId
-  // (== alert-id) can appear multiple times in a single response. Without
-  // collapsing here, every row would call sendAlertToUser even though the
-  // audit unique index `{alert-id, user_contact, location}` rejects the
-  // second insert — resulting in duplicate Notify calls. Keep the first
-  // occurrence per alert-id; Ricardo orders newest-first, so that's the most
-  // recent measurement.
-  const seenAlertIds = new Set()
-  const uniqueNewAlerts = []
-  for (const alert of newAlerts) {
-    if (!seenAlertIds.has(alert['alert-id'])) {
-      seenAlertIds.add(alert['alert-id'])
-      uniqueNewAlerts.push(alert)
-    }
-  }
+  const uniqueNewAlerts = collapseInCycleDuplicates(newAlerts)
 
   logger.info(
     `[Pollutant] ${uniqueNewAlerts.length} unique alerts to process (${newAlerts.length - uniqueNewAlerts.length} duplicate rows collapsed, ${processedIds.size} already processed in prior cycles)`
   )
+  if (uniqueNewAlerts.length === 0) return
 
-  if (uniqueNewAlerts.length === 0) {
-    return
-  }
-
-  // Region resolution depends entirely on the site cache. If it's empty the
-  // startup fetch likely failed — try one on-demand refresh, and skip the cycle
-  // if it still can't be populated rather than skipping every alert one by one.
-  if (getSiteCacheSize() === 0) {
-    const populated = await ensureSiteCachePopulated()
-    if (!populated) {
-      logger.info(
-        '[Pollutant] Site cache empty and refresh failed; skipping cycle (will retry on next run)'
-      )
-      return
-    }
-  }
+  if (!(await ensureCacheReadyForCycle())) return
 
   for (const alertDetail of uniqueNewAlerts) {
     await processAlertForUsers(db, alertDetail)

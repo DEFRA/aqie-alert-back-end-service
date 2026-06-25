@@ -297,20 +297,57 @@ async function processAlertForUsers(db, alertDetail) {
   }
 }
 
-export async function processDaqiAlerts(db) {
-  logger.info('[DAQI] Starting DAQI alert processing cycle')
+// Same (samplingPointId, siteId, date) row can appear multiple times in a
+// single Ricardo response; collapse to first occurrence so we don't double-
+// process within a cycle (the audit unique index would reject duplicates
+// anyway, but this avoids the wasted Notify calls and noisy logs).
+function collapseInCycleDuplicates(alerts) {
+  const seen = new Set()
+  const unique = []
+  for (const alert of alerts) {
+    if (!seen.has(alert['alert-id'])) {
+      seen.add(alert['alert-id'])
+      unique.push(alert)
+    }
+  }
+  return unique
+}
 
+// Region resolution depends entirely on the site cache. If it's empty the
+// startup fetch likely failed — try one on-demand refresh, and skip the cycle
+// rather than skipping every alert one by one. Returns true when the cache is
+// usable, false when the caller should abort the cycle.
+async function ensureCacheReadyForCycle() {
+  if (getSiteCacheSize() > 0) {
+    return true
+  }
+  const populated = await ensureSiteCachePopulated()
+  if (populated) {
+    return true
+  }
+  logger.info(
+    '[DAQI] Site cache empty and refresh failed; skipping cycle (will retry on next run)'
+  )
+  return false
+}
+
+async function fetchDaqiAlertsForCycle() {
   const { startDate, endDate } = getDaqiAlertWindow()
-
-  let alertData
   try {
-    alertData = await fetchDaqiAlerts({ startDate, endDate })
+    return await fetchDaqiAlerts({ startDate, endDate })
   } catch (err) {
     logger.error(
       `[DAQI] Failed to fetch Ricardo DAQI alerts ${JSON.stringify({ upstreamStatus: err.status ?? null, error: err.message })}`
     )
-    return
+    return null
   }
+}
+
+export async function processDaqiAlerts(db) {
+  logger.info('[DAQI] Starting DAQI alert processing cycle')
+
+  const alertData = await fetchDaqiAlertsForCycle()
+  if (!alertData) return
 
   const members = alertData.member ?? []
   if (members.length === 0) {
@@ -323,49 +360,20 @@ export async function processDaqiAlerts(db) {
   logger.info(
     `[DAQI] Filtered ${validAlerts.length} valid alerts from ${members.length} total (daqi>=${threshold}, validationStatus=2)`
   )
-
-  if (validAlerts.length === 0) {
-    return
-  }
+  if (validAlerts.length === 0) return
 
   const processedKeys = await getAlreadyProcessedAlertKeys(db)
   const newAlerts = validAlerts.filter(
     (alert) => !processedKeys.has(alert['alert-id'])
   )
-
-  // Same (samplingPointId, siteId, date) row can appear multiple times in a
-  // single Ricardo response; collapse to first occurrence so we don't double-
-  // process within a cycle (the audit unique index would reject duplicates
-  // anyway, but this avoids the wasted Notify calls and noisy logs).
-  const seenKeys = new Set()
-  const uniqueNewAlerts = []
-  for (const alert of newAlerts) {
-    if (!seenKeys.has(alert['alert-id'])) {
-      seenKeys.add(alert['alert-id'])
-      uniqueNewAlerts.push(alert)
-    }
-  }
+  const uniqueNewAlerts = collapseInCycleDuplicates(newAlerts)
 
   logger.info(
     `[DAQI] ${uniqueNewAlerts.length} unique alerts to process (${newAlerts.length - uniqueNewAlerts.length} duplicate rows collapsed, ${processedKeys.size} already processed in prior cycles)`
   )
+  if (uniqueNewAlerts.length === 0) return
 
-  if (uniqueNewAlerts.length === 0) {
-    return
-  }
-
-  // Region resolution depends entirely on the site cache. If it's empty the
-  // startup fetch likely failed — try one on-demand refresh, and skip the cycle
-  // if it still can't be populated rather than skipping every alert one by one.
-  if (getSiteCacheSize() === 0) {
-    const populated = await ensureSiteCachePopulated()
-    if (!populated) {
-      logger.info(
-        '[DAQI] Site cache empty and refresh failed; skipping cycle (will retry on next run)'
-      )
-      return
-    }
-  }
+  if (!(await ensureCacheReadyForCycle())) return
 
   for (const alertDetail of uniqueNewAlerts) {
     await processAlertForUsers(db, alertDetail)
