@@ -10,7 +10,8 @@ import { getRollingDayWindow } from './dateRangeUtils.js'
 import {
   collapseInCycleDuplicates,
   ensureCacheReadyForCycle,
-  getMatchingUsers
+  getMatchingUsers,
+  sendNotificationsToUsers
 } from './alertCycleUtils.js'
 import { config } from '../../config.js'
 import { createLogger } from '../../common/helpers/logging/logger.js'
@@ -230,28 +231,15 @@ async function processAlertForUsers(db, alertDetail) {
       `[DAQI] Alert ${resolvedDetail['alert-id']}: matched ${matchedUsers.length} user-location pairs in region "${resolvedDetail.region}"`
     )
 
-    let allSent = true
-    for (const userMatch of matchedUsers) {
-      await insertDaqiAuditEntry(db, resolvedDetail, userMatch)
-      try {
-        const notificationId = await sendAlertToUser(userMatch, resolvedDetail)
-        await updateDaqiAuditEntry(
-          db,
-          resolvedDetail['alert-id'],
-          userMatch.userContact,
-          userMatch.location,
-          notificationId
-        )
-        logger.info(
-          `[DAQI] Notification sent for alert ${resolvedDetail['alert-id']} to ${userMatch.alertType} user, notificationId: ${notificationId}`
-        )
-      } catch (err) {
-        allSent = false
-        logger.error(
-          `[DAQI] Failed to send notification for alert ${resolvedDetail['alert-id']} ${JSON.stringify({ alertType: userMatch.alertType, error: err.message })}`
-        )
-      }
-    }
+    const allSent = await sendNotificationsToUsers({
+      db,
+      alertDetail: resolvedDetail,
+      matchedUsers,
+      logPrefix: '[DAQI]',
+      insertAuditEntry: insertDaqiAuditEntry,
+      updateAuditEntry: updateDaqiAuditEntry,
+      sendAlert: sendAlertToUser
+    })
 
     if (allSent) {
       await markAlertProcessed(db, resolvedDetail)
@@ -282,7 +270,9 @@ export async function processDaqiAlerts(db) {
   logger.info('[DAQI] Starting DAQI alert processing cycle')
 
   const alertData = await fetchDaqiAlertsForCycle()
-  if (!alertData) return
+  if (!alertData) {
+    return
+  }
 
   const members = alertData.member ?? []
   if (members.length === 0) {
@@ -295,7 +285,9 @@ export async function processDaqiAlerts(db) {
   logger.info(
     `[DAQI] Filtered ${validAlerts.length} valid alerts from ${members.length} total (daqi>=${threshold}, validationStatus=2)`
   )
-  if (validAlerts.length === 0) return
+  if (validAlerts.length === 0) {
+    return
+  }
 
   const processedKeys = await getAlreadyProcessedAlertKeys(db)
   const newAlerts = validAlerts.filter(
@@ -306,9 +298,12 @@ export async function processDaqiAlerts(db) {
   logger.info(
     `[DAQI] ${uniqueNewAlerts.length} unique alerts to process (${newAlerts.length - uniqueNewAlerts.length} duplicate rows collapsed, ${processedKeys.size} already processed in prior cycles)`
   )
-  if (uniqueNewAlerts.length === 0) return
-
-  if (!(await ensureCacheReadyForCycle('[DAQI]'))) return
+  if (uniqueNewAlerts.length === 0) {
+    return
+  }
+  if (!(await ensureCacheReadyForCycle('[DAQI]'))) {
+    return
+  }
 
   for (const alertDetail of uniqueNewAlerts) {
     await processAlertForUsers(db, alertDetail)

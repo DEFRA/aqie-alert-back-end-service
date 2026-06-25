@@ -68,3 +68,60 @@ export function getMatchingUsers(users, alertRegion) {
       }))
   )
 }
+
+/**
+ * Notifies each matched user for a single alert: inserts the audit entry,
+ * sends the notification, updates the audit row with the notificationId.
+ *
+ * Returns true when every user-location pair succeeded; false if any send
+ * failed. Callers use the return value to decide whether the alert is fully
+ * processed (and so eligible to be marked 'processed' in the dedup
+ * collection) or should be retried on the next cycle.
+ *
+ * Per-user failures are logged at `error` and don't abort the loop, so a
+ * single bad recipient (e.g. an invalid phone number) doesn't block alerts
+ * to the other users.
+ *
+ * @param {object} opts
+ * @param {object} opts.db                  Mongo db handle
+ * @param {object} opts.alertDetail         resolved alert (with region)
+ * @param {Array}  opts.matchedUsers        from getMatchingUsers()
+ * @param {string} opts.logPrefix           e.g. '[DAQI]' / '[Pollutant]'
+ * @param {Function} opts.insertAuditEntry  (db, alertDetail, userMatch) -> Promise
+ * @param {Function} opts.updateAuditEntry  (db, alertId, userContact, location, notificationId) -> Promise
+ * @param {Function} opts.sendAlert         (userMatch, alertDetail) -> Promise<notificationId>
+ * @returns {Promise<boolean>} true if all notifications were dispatched successfully
+ */
+export async function sendNotificationsToUsers({
+  db,
+  alertDetail,
+  matchedUsers,
+  logPrefix,
+  insertAuditEntry,
+  updateAuditEntry,
+  sendAlert
+}) {
+  let allSent = true
+  for (const userMatch of matchedUsers) {
+    await insertAuditEntry(db, alertDetail, userMatch)
+    try {
+      const notificationId = await sendAlert(userMatch, alertDetail)
+      await updateAuditEntry(
+        db,
+        alertDetail['alert-id'],
+        userMatch.userContact,
+        userMatch.location,
+        notificationId
+      )
+      logger.info(
+        `${logPrefix} Notification sent for alert ${alertDetail['alert-id']} to ${userMatch.alertType} user, notificationId: ${notificationId}`
+      )
+    } catch (err) {
+      allSent = false
+      logger.error(
+        `${logPrefix} Failed to send notification for alert ${alertDetail['alert-id']} ${JSON.stringify({ alertType: userMatch.alertType, error: err.message })}`
+      )
+    }
+  }
+  return allSent
+}

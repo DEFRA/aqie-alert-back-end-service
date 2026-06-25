@@ -68,7 +68,9 @@ async function fetchSiteMetaDataForRefresh() {
 
 async function refreshCache() {
   const siteData = await fetchSiteMetaDataForRefresh()
-  if (!siteData) return
+  if (!siteData) {
+    return
+  }
 
   const members = siteData.member ?? []
   if (members.length === 0) {

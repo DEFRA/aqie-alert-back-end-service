@@ -5,7 +5,8 @@ import { formatLocationForUrl } from './locationUtils.js'
 import {
   collapseInCycleDuplicates,
   ensureCacheReadyForCycle,
-  getMatchingUsers
+  getMatchingUsers,
+  sendNotificationsToUsers
 } from './alertCycleUtils.js'
 import { config } from '../../config.js'
 import { createLogger } from '../../common/helpers/logging/logger.js'
@@ -230,28 +231,15 @@ async function processAlertForUsers(db, alertDetail) {
       `[Pollutant] Alert ${resolvedDetail['alert-id']}: matched ${matchedUsers.length} user-location pairs in region "${resolvedDetail.region}"`
     )
 
-    let allSent = true
-    for (const userMatch of matchedUsers) {
-      await insertPollutantAuditEntry(db, resolvedDetail, userMatch)
-      try {
-        const notificationId = await sendAlertToUser(userMatch, resolvedDetail)
-        await updatePollutantAuditEntry(
-          db,
-          resolvedDetail['alert-id'],
-          userMatch.userContact,
-          userMatch.location,
-          notificationId
-        )
-        logger.info(
-          `[Pollutant] Notification sent for alert ${resolvedDetail['alert-id']} to ${userMatch.alertType} user, notificationId: ${notificationId}`
-        )
-      } catch (err) {
-        allSent = false
-        logger.error(
-          `[Pollutant] Failed to send notification for alert ${resolvedDetail['alert-id']} ${JSON.stringify({ alertType: userMatch.alertType, error: err.message })}`
-        )
-      }
-    }
+    const allSent = await sendNotificationsToUsers({
+      db,
+      alertDetail: resolvedDetail,
+      matchedUsers,
+      logPrefix: '[Pollutant]',
+      insertAuditEntry: insertPollutantAuditEntry,
+      updateAuditEntry: updatePollutantAuditEntry,
+      sendAlert: sendAlertToUser
+    })
 
     if (allSent) {
       await markAlertProcessed(db, resolvedDetail['alert-id'])
@@ -281,7 +269,9 @@ export async function processPollutantAlerts(db) {
   logger.info('[Pollutant] Starting pollutant alert processing cycle')
 
   const alertData = await fetchPollutantAlertsForCycle()
-  if (!alertData) return
+  if (!alertData) {
+    return
+  }
 
   const members = alertData.member ?? []
   if (members.length === 0) {
@@ -309,9 +299,13 @@ export async function processPollutantAlerts(db) {
   logger.info(
     `[Pollutant] ${uniqueNewAlerts.length} unique alerts to process (${newAlerts.length - uniqueNewAlerts.length} duplicate rows collapsed, ${processedIds.size} already processed in prior cycles)`
   )
-  if (uniqueNewAlerts.length === 0) return
+  if (uniqueNewAlerts.length === 0) {
+    return
+  }
 
-  if (!(await ensureCacheReadyForCycle('[Pollutant]'))) return
+  if (!(await ensureCacheReadyForCycle('[Pollutant]'))) {
+    return
+  }
 
   for (const alertDetail of uniqueNewAlerts) {
     await processAlertForUsers(db, alertDetail)
