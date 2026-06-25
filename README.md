@@ -1,6 +1,6 @@
 # aqie-alert-back-end-service
 
-Node.js microservice that manages air quality alert subscriptions. Users register for location-based SMS or email notifications when air quality is poor in their area, and can unsubscribe at any time. Two background schedulers dispatch alerts automatically — one polling the Ricardo AQSR API every 30 minutes for real-time pollutant measurements, and one fetching the MetOffice DAQI forecast hourly between 05:00–10:00 UTC (the first tick with current forecast data does the work; subsequent ticks short-circuit via the per-day schedule-state guard).
+Node.js microservice that manages air quality alert subscriptions. Users register for location-based SMS or email notifications when air quality is poor in their area, and can unsubscribe at any time. Three background schedulers dispatch alerts automatically — one polling the Ricardo AQSR API every 15 minutes for real-time pollutant measurements, one polling the Ricardo DAQI API every 15 minutes for current-day DAQI breaches, and one fetching the MetOffice DAQI forecast hourly between 05:00–10:00 UTC (the first tick with current forecast data does the work; subsequent ticks short-circuit via the per-day schedule-state guard).
 
 - [Requirements](#requirements)
   - [Node.js](#nodejs)
@@ -114,6 +114,7 @@ git config --global core.autocrlf false
 | `DELETE` | `/opt-out-sms-alert`   | Unsubscribe an SMS user by phone number                               |
 | `DELETE` | `/opt-out-email-alert` | Unsubscribe an email user by email address                            |
 | `GET`    | `/aqsr-alert`          | Query AQSR breach alerts by current location (lat/long) or date range |
+| `GET`    | `/daqi-alert`          | Query DAQI breach alerts for the region resolved from lat/long        |
 
 Full request/response details, validation rules, field descriptions, and environment variables are in [API_DOCUMENTATION.md](./API_DOCUMENTATION.md).
 
@@ -124,6 +125,7 @@ Full request/response details, validation rules, field descriptions, and environ
 | [API_DOCUMENTATION.md](./API_DOCUMENTATION.md)                                             | All API endpoints — request/response shapes, validation rules, error codes, data model, and full environment variable reference                                                                    |
 | [METOFFICE-FORECAST-ALERT-IMPLEMENTATION.md](./METOFFICE-FORECAST-ALERT-IMPLEMENTATION.md) | End-to-end implementation detail for the daily DAQI forecast alert scheduler — architecture, step-by-step flow, MongoDB collections, sequence diagram, and error handling                          |
 | [POLLUTANT-ALERT-IMPLEMENTATION.md](./POLLUTANT-ALERT-IMPLEMENTATION.md)                   | End-to-end implementation detail for the 30-minute pollutant alert scheduler — architecture, step-by-step flow, region resolution cache, MongoDB collections, sequence diagram, and error handling |
+| [DAQI-ALERT-IMPLEMENTATION.md](./DAQI-ALERT-IMPLEMENTATION.md)                             | End-to-end implementation detail for the 15-minute DAQI alert flow — `GET /daqi-alert` endpoint, scheduler, region resolver, upstream error mapper, MongoDB collections, and error handling        |
 
 ## Development helpers
 

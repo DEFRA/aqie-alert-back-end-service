@@ -130,10 +130,26 @@ describe('ricardoApiClient', () => {
       )
 
       await expect(getAccessToken()).rejects.toMatchObject({
-        message: 'Ricardo API login failed: 401 - Unauthorized',
+        message: 'Ricardo API login failed: 401',
         status: 401,
         body: 'Unauthorized'
       })
+    })
+
+    it('keeps a large upstream error body out of err.message but preserves it on err.body', async () => {
+      const bigBody = `<html>${'x'.repeat(5000)}</html>`
+      const { getAccessToken, fetch } = await setup()
+      fetch.mockResolvedValue(
+        makeResponse({ ok: false, status: 403, text: bigBody })
+      )
+
+      const err = await getAccessToken().catch((e) => e)
+
+      // The huge body must NOT be baked into the message (which downstream
+      // catches log), but should remain available on err.body.
+      expect(err.message).toBe('Ricardo API login failed: 403')
+      expect(err.message).not.toContain('<html>')
+      expect(err.body).toBe(bigBody)
     })
   })
 
@@ -228,7 +244,7 @@ describe('ricardoApiClient', () => {
       )
 
       await expect(fetchAlerts()).rejects.toMatchObject({
-        message: 'Ricardo API alerts fetch failed: 503 - Unavailable',
+        message: 'Ricardo API alerts fetch failed: 503',
         status: 503,
         body: 'Unavailable'
       })

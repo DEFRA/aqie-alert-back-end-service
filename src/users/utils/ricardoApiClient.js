@@ -9,6 +9,9 @@ const RICARDO_REQUEST_TIMEOUT_MS = 30_000
 const TWENTY_FOUR_HOURS_MS = 24 * 60 * 60 * 1000
 const ACCEPT_LD_JSON = 'application/ld+json'
 const CONTENT_TYPE_JSON = 'application/json'
+// Cap how much of an upstream error body we log (large HTML proxy/block pages
+// would otherwise flood the logs on every failed call).
+const ERROR_BODY_LOG_LIMIT = 200
 
 // en-CA locale formats as YYYY-MM-DD; timeZone pins it to UK local date
 // regardless of host timezone, so BST/GMT shifts are handled correctly.
@@ -111,12 +114,15 @@ async function ensureRicardoResponseOk(response, operation) {
   }
 
   const errorText = await response.text()
+  // Upstream errors can return large HTML bodies (e.g. a proxy/Zscaler block
+  // page). Log only a short snippet and keep it OUT of err.message, so the many
+  // downstream catches that log err.message don't each re-dump kilobytes of
+  // HTML into CDP logs. The full body stays on err.body for callers that need it.
+  const errorSnippet = errorText.slice(0, ERROR_BODY_LOG_LIMIT)
   logger.error(
-    `Ricardo API call failed ${JSON.stringify({ operation, status: response.status, errorText })}`
+    `Ricardo API call failed ${JSON.stringify({ operation, status: response.status, errorSnippet })}`
   )
-  const err = new Error(
-    `Ricardo API ${operation} failed: ${response.status} - ${errorText}`
-  )
+  const err = new Error(`Ricardo API ${operation} failed: ${response.status}`)
   err.status = response.status
   err.body = errorText
   throw err

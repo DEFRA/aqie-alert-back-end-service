@@ -3,6 +3,9 @@ import { config } from '../../config.js'
 import { createLogger } from '../../common/helpers/logging/logger.js'
 
 const logger = createLogger()
+// Cap how much of an upstream error body we surface (a large HTML error/block
+// page would otherwise be logged via the caller's err.message).
+const ERROR_BODY_LOG_LIMIT = 200
 
 export async function fetchForecast() {
   const forecastApiUrl = config.get('metOfficeForecast.forecastApiUrl')
@@ -19,7 +22,7 @@ export async function fetchForecast() {
   if (!response.ok) {
     const errorText = await response.text()
     throw new Error(
-      `Forecast API responded with ${response.status}: ${errorText}`
+      `Forecast API responded with ${response.status}: ${errorText.slice(0, ERROR_BODY_LOG_LIMIT)}`
     )
   }
 

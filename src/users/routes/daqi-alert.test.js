@@ -32,8 +32,37 @@ describe('daqi-alert route', () => {
       expect(typeof daqiAlert.options.description).toBe('string')
     })
 
-    it('should not have query/payload validation (no request params expected)', () => {
-      expect(daqiAlert.options.validate).toBeUndefined()
+    it('should declare a query validation function', () => {
+      expect(typeof daqiAlert.options.validate.query).toBe('function')
+    })
+  })
+
+  describe('Query validation', () => {
+    const validate = (value) => daqiAlert.options.validate.query(value)
+
+    it('should return parsed numeric lat/long for valid coordinates', () => {
+      expect(validate({ lat: '53.4', long: '-2.2' })).toEqual({
+        lat: 53.4,
+        long: -2.2
+      })
+    })
+
+    it('should throw 400 when lat is missing', () => {
+      expect(() => validate({ long: '-2.2' })).toThrowError(
+        /lat and long are required/
+      )
+    })
+
+    it('should throw 400 when long is missing', () => {
+      expect(() => validate({ lat: '53.4' })).toThrowError(
+        /lat and long are required/
+      )
+    })
+
+    it('should throw 400 when coordinates are not valid numbers', () => {
+      expect(() => validate({ lat: 'abc', long: '-2.2' })).toThrowError(
+        /lat and long must be valid numbers/
+      )
     })
   })
 

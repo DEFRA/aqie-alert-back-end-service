@@ -78,4 +78,20 @@ async function createIndexes(db) {
   await db
     .collection('forecast-schedule-state')
     .createIndex({ forecastDate: 1 }, { unique: true })
+
+  // DAQI alert dedup key: a single alert is identified by the combination of
+  // samplingPointId + siteId + date (compound unique). The schedule re-runs
+  // every 15 minutes; this index ensures the same breach is not re-processed.
+  await db
+    .collection('daqi-alert-processing-state')
+    .createIndex({ samplingPointId: 1, siteId: 1, date: 1 }, { unique: true })
+
+  await db.collection('daqi-alerts-audit').createIndex({ 'alert-id': 1 })
+
+  await db
+    .collection('daqi-alerts-audit')
+    .createIndex(
+      { 'alert-id': 1, user_contact: 1, location: 1 },
+      { unique: true }
+    )
 }

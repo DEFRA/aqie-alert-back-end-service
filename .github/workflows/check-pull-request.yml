@@ -48,7 +48,7 @@ jobs:
 
       - name: SonarCloud Scan
         if: github.actor != 'dependabot[bot]'
-        uses: SonarSource/sonarqube-scan-action@v5 #  tracks latest v5 patch (Node 24 compatible) — see https://github.com/marketplace/actions/official-sonarqube-scan
+        uses: SonarSource/sonarqube-scan-action@v6 #  tracks latest v5 patch (Node 24 compatible) — see https://github.com/marketplace/actions/official-sonarqube-scan
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}

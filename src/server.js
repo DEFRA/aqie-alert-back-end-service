@@ -12,6 +12,7 @@ import { requestTracing } from './common/helpers/request-tracing.js'
 import { setupProxy } from './common/helpers/proxy/setup-proxy.js'
 import { pollutantAlertScheduler } from './plugins/pollutant-alert-scheduler.js'
 import { forecastAlertScheduler } from './plugins/forecast-alert-scheduler.js'
+import { daqiAlertScheduler } from './plugins/daqi-alert-scheduler.js'
 import {
   initSiteCache,
   stopSiteCache
@@ -63,7 +64,8 @@ async function createServer() {
     },
     router,
     pollutantAlertScheduler,
-    forecastAlertScheduler
+    forecastAlertScheduler,
+    daqiAlertScheduler
   ])
 
   server.ext('onPreStart', async () => {

@@ -62,6 +62,8 @@ describe('ricardoSiteAndRegionCache', () => {
   let getRegionForSite
   let getSiteIdsForRegion
   let getSiteInfo
+  let getSiteCacheSize
+  let ensureSiteCachePopulated
   let mockFetchSiteMetaData
   let mockFindRegion
 
@@ -76,6 +78,8 @@ describe('ricardoSiteAndRegionCache', () => {
     getRegionForSite = mod.getRegionForSite
     getSiteIdsForRegion = mod.getSiteIdsForRegion
     getSiteInfo = mod.getSiteInfo
+    getSiteCacheSize = mod.getSiteCacheSize
+    ensureSiteCachePopulated = mod.ensureSiteCachePopulated
 
     mockFetchSiteMetaData = vi.mocked(
       (await import('./ricardoApiClient.js')).fetchSiteMetaData
@@ -240,6 +244,81 @@ describe('ricardoSiteAndRegionCache', () => {
     })
   })
 
+  describe('getSiteCacheSize', () => {
+    it('should return 0 before the cache is initialised', () => {
+      expect(getSiteCacheSize()).toBe(0)
+    })
+
+    it('should reflect the number of populated sites after init', async () => {
+      mockFetchSiteMetaData.mockResolvedValue({
+        member: [siteNW, siteLondon]
+      })
+      mockFindRegion
+        .mockReturnValueOnce(REGION_NW)
+        .mockReturnValueOnce(REGION_LONDON)
+
+      await initSiteCache()
+
+      expect(getSiteCacheSize()).toBe(2)
+    })
+  })
+
+  describe('ensureSiteCachePopulated', () => {
+    it('should return true without re-fetching when the cache already holds sites', async () => {
+      mockFetchSiteMetaData.mockResolvedValue({ member: [siteNW] })
+      mockFindRegion.mockReturnValue(REGION_NW)
+      await initSiteCache()
+      mockFetchSiteMetaData.mockClear()
+
+      const result = await ensureSiteCachePopulated()
+
+      expect(result).toBe(true)
+      expect(mockFetchSiteMetaData).not.toHaveBeenCalled()
+    })
+
+    it('should attempt a refresh and return true when an empty cache is repopulated', async () => {
+      // Startup fetch fails → cache stays empty.
+      mockFetchSiteMetaData.mockRejectedValueOnce(new Error('startup failed'))
+      await initSiteCache({ maxAttempts: 1 })
+      expect(getSiteCacheSize()).toBe(0)
+
+      // On-demand refresh succeeds.
+      mockFetchSiteMetaData.mockResolvedValueOnce({ member: [siteNW] })
+      mockFindRegion.mockReturnValue(REGION_NW)
+
+      const result = await ensureSiteCachePopulated()
+
+      expect(result).toBe(true)
+      expect(getSiteCacheSize()).toBe(1)
+    })
+
+    it('should return false when the cache is empty and the refresh also fails', async () => {
+      mockFetchSiteMetaData.mockRejectedValueOnce(new Error('startup failed'))
+      await initSiteCache({ maxAttempts: 1 })
+
+      mockFetchSiteMetaData.mockRejectedValueOnce(new Error('refresh failed'))
+
+      const result = await ensureSiteCachePopulated()
+
+      expect(result).toBe(false)
+      expect(getSiteCacheSize()).toBe(0)
+    })
+
+    it('emits the unique empty-cache alert when the on-demand refresh also fails', async () => {
+      mockFetchSiteMetaData.mockRejectedValueOnce(new Error('startup failed'))
+      await initSiteCache({ maxAttempts: 1 })
+
+      mockFetchSiteMetaData.mockRejectedValueOnce(new Error('still down'))
+
+      const result = await ensureSiteCachePopulated()
+
+      expect(result).toBe(false)
+      expect(mockLogger.error).toHaveBeenCalledWith(
+        expect.stringContaining('SITE_CACHE_EMPTY')
+      )
+    })
+  })
+
   describe('initSiteCache', () => {
     it('should populate map and return correct region for known siteId', async () => {
       mockFetchSiteMetaData.mockResolvedValue({ member: [siteNW] })
@@ -297,7 +376,7 @@ describe('ricardoSiteAndRegionCache', () => {
         member: [{ siteId: null, latitude: LAT_NW, longitude: LON_NW }]
       })
 
-      await initSiteCache()
+      await initSiteCache({ maxAttempts: 1 })
 
       expect(mockFindRegion).not.toHaveBeenCalled()
       expect(getRegionForSite(null)).toBeNull()
@@ -308,7 +387,7 @@ describe('ricardoSiteAndRegionCache', () => {
         member: [{ siteId: SITE_ID_NW, latitude: null, longitude: LON_NW }]
       })
 
-      await initSiteCache()
+      await initSiteCache({ maxAttempts: 1 })
 
       expect(mockFindRegion).not.toHaveBeenCalled()
       expect(getRegionForSite(SITE_ID_NW)).toBeNull()
@@ -319,7 +398,7 @@ describe('ricardoSiteAndRegionCache', () => {
         member: [{ siteId: SITE_ID_NW, latitude: LAT_NW, longitude: null }]
       })
 
-      await initSiteCache()
+      await initSiteCache({ maxAttempts: 1 })
 
       expect(mockFindRegion).not.toHaveBeenCalled()
       expect(getRegionForSite(SITE_ID_NW)).toBeNull()
@@ -333,7 +412,7 @@ describe('ricardoSiteAndRegionCache', () => {
       })
       mockFindRegion.mockReturnValue('Unknown')
 
-      await initSiteCache()
+      await initSiteCache({ maxAttempts: 1 })
 
       expect(getRegionForSite(SITE_ID_UNKNOWN_REGION)).toBeNull()
     })
@@ -341,20 +420,48 @@ describe('ricardoSiteAndRegionCache', () => {
     it('should handle fetchSiteMetaData failure without throwing', async () => {
       mockFetchSiteMetaData.mockRejectedValue(new Error('API unreachable'))
 
-      await expect(initSiteCache()).resolves.not.toThrow()
+      await expect(initSiteCache({ maxAttempts: 1 })).resolves.not.toThrow()
       expect(getRegionForSite(SITE_ID_NW)).toBeNull()
     })
 
     it('should handle empty member array without throwing', async () => {
       mockFetchSiteMetaData.mockResolvedValue({ member: [] })
 
-      await expect(initSiteCache()).resolves.not.toThrow()
+      await expect(initSiteCache({ maxAttempts: 1 })).resolves.not.toThrow()
     })
 
     it('should handle response without member property without throwing', async () => {
       mockFetchSiteMetaData.mockResolvedValue({})
 
-      await expect(initSiteCache()).resolves.not.toThrow()
+      await expect(initSiteCache({ maxAttempts: 1 })).resolves.not.toThrow()
+    })
+
+    it('retries with backoff at boot and populates once the fetch recovers', async () => {
+      mockFetchSiteMetaData
+        .mockRejectedValueOnce(new Error('boot blip'))
+        .mockResolvedValueOnce({ member: [siteNW] })
+      mockFindRegion.mockReturnValue(REGION_NW)
+
+      const promise = initSiteCache({ maxAttempts: 3, baseDelayMs: 50 })
+      await vi.advanceTimersByTimeAsync(50) // fire the backoff delay
+      await promise
+
+      expect(mockFetchSiteMetaData).toHaveBeenCalledTimes(2)
+      expect(getRegionForSite(SITE_ID_NW)).toBe(REGION_NW)
+    })
+
+    it('emits the unique empty-cache alert when all boot attempts fail', async () => {
+      mockFetchSiteMetaData.mockRejectedValue(new Error('down'))
+
+      const promise = initSiteCache({ maxAttempts: 2, baseDelayMs: 50 })
+      await vi.advanceTimersByTimeAsync(50)
+      await promise
+
+      expect(getSiteCacheSize()).toBe(0)
+      expect(mockFetchSiteMetaData).toHaveBeenCalledTimes(2)
+      expect(mockLogger.error).toHaveBeenCalledWith(
+        expect.stringContaining('SITE_CACHE_EMPTY')
+      )
     })
 
     it('should mix valid and skipped sites correctly', async () => {
@@ -414,6 +521,48 @@ describe('ricardoSiteAndRegionCache', () => {
       await vi.advanceTimersByTimeAsync(TTL_24H_MS)
 
       expect(getRegionForSite(SITE_ID_NEW)).toBe(REGION_LONDON)
+    })
+
+    it('should drop sites removed by Ricardo on refresh (atomic rebuild)', async () => {
+      mockFetchSiteMetaData
+        .mockResolvedValueOnce({ member: [siteNW, siteLondon] })
+        .mockResolvedValueOnce({ member: [siteLondon] })
+      mockFindRegion
+        .mockReturnValueOnce(REGION_NW)
+        .mockReturnValueOnce(REGION_LONDON)
+        .mockReturnValueOnce(REGION_LONDON)
+
+      await initSiteCache()
+      expect(getRegionForSite(SITE_ID_NW)).toBe(REGION_NW)
+
+      await vi.advanceTimersByTimeAsync(TTL_24H_MS)
+
+      // siteNW is no longer in Ricardo's response → dropped from the cache.
+      expect(getRegionForSite(SITE_ID_NW)).toBeNull()
+      expect(getRegionForSite(SITE_ID_LONDON)).toBe(REGION_LONDON)
+      expect(getSiteCacheSize()).toBe(1)
+    })
+
+    it('should keep existing cache when refresh returns members but none usable', async () => {
+      mockFetchSiteMetaData
+        .mockResolvedValueOnce({ member: [siteNW] })
+        .mockResolvedValueOnce({
+          member: [
+            { siteId: SITE_ID_UNKNOWN_REGION, latitude: '0', longitude: '0' }
+          ]
+        })
+      mockFindRegion
+        .mockReturnValueOnce(REGION_NW)
+        .mockReturnValueOnce('Unknown')
+
+      await initSiteCache()
+      expect(getRegionForSite(SITE_ID_NW)).toBe(REGION_NW)
+
+      await vi.advanceTimersByTimeAsync(TTL_24H_MS)
+
+      // Refresh produced zero usable sites → previous good cache retained.
+      expect(getRegionForSite(SITE_ID_NW)).toBe(REGION_NW)
+      expect(getSiteCacheSize()).toBe(1)
     })
 
     it('should preserve existing cache data when API is down during TTL refresh', async () => {
@@ -478,7 +627,7 @@ describe('ricardoSiteAndRegionCache', () => {
     it('should not throw when called multiple times', async () => {
       mockFetchSiteMetaData.mockResolvedValue({ member: [] })
 
-      await initSiteCache()
+      await initSiteCache({ maxAttempts: 1 })
 
       expect(() => {
         stopSiteCache()

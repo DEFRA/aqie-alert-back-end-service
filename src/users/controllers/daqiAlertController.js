@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { fetchDaqiAlerts } from '../utils/ricardoApiClient.js'
+import { getRegionForSite } from '../utils/ricardoSiteAndRegionCache.js'
+import { resolveRegionContext } from '../utils/regionResolver.js'
 import { formatPollutantName } from '../utils/pollutantAlertProcessor.js'
 import { mapUpstreamError } from '../utils/upstreamErrorMapper.js'
 import { config } from '../../config.js'
@@ -50,6 +52,20 @@ function sortByDateDesc(alerts) {
 
 export async function daqiAlertHandler(request, h) {
   const requestId = request.headers['x-request-id'] || `req-${randomUUID()}`
+  const { lat, long } = request.query
+
+  // Resolve the UK region from the supplied coordinates and ensure the site
+  // cache is healthy. Each alert's region is then looked up per-siteId from the
+  // cache during filtering below (region is always derived from siteId, never
+  // from Ricardo's coarse region field).
+  const context = await resolveRegionContext(lat, long, {
+    logPrefix: LOG_PREFIX,
+    requestId
+  })
+  if (!context) {
+    return h.response([]).code(STATUS_OK)
+  }
+  const { region } = context
 
   // Always query Ricardo for yesterday + today (UK local date). The
   // isWithinLast24Hours filter below then trims to the precise rolling window.
@@ -84,16 +100,19 @@ export async function daqiAlertHandler(request, h) {
 
   const daqiThreshold = config.get('metOfficeForecast.daqiAlertThreshold')
 
+  // For each alert, resolve its region from siteId via the cache and keep it
+  // only if that region matches the caller's region.
   const matchingAlerts = members.filter(
     (alert) =>
       typeof alert.daqi === 'number' &&
       alert.daqi >= daqiThreshold &&
       alert.validationStatus === 2 &&
-      isWithinLast24Hours(alert.date)
+      isWithinLast24Hours(alert.date) &&
+      getRegionForSite(alert.siteId) === region
   )
 
   logger.info(
-    `${LOG_PREFIX} ${matchingAlerts.length} DAQI alert(s) passed filter (daqi>=${daqiThreshold}, validationStatus=2, within 24h) ${JSON.stringify({ requestId })}`
+    `${LOG_PREFIX} ${matchingAlerts.length} DAQI alert(s) passed filter (daqi>=${daqiThreshold}, validationStatus=2, region="${region}", within 24h) ${JSON.stringify({ requestId })}`
   )
 
   return h

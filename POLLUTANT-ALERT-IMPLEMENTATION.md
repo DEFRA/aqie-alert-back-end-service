@@ -2,7 +2,7 @@
 
 ## Overview
 
-This feature adds automated pollutant alert notifications to `aqie-alert-back-end-service`. Every 30 minutes the service polls the Ricardo AQSR Alerts API, identifies new high-level alerts, matches them to registered users by region, and dispatches SMS/email notifications via `aqie-notify-service`. Every notification attempt is recorded in the `pollutant-alerts-audit` collection for traceability.
+This feature adds automated pollutant alert notifications to `aqie-alert-back-end-service`. Every 15 minutes the service polls the Ricardo AQSR Alerts API, identifies new high-level alerts, matches them to registered users by region, and dispatches SMS/email notifications via `aqie-notify-service`. Every notification attempt is recorded in the `pollutant-alerts-audit` collection for traceability.
 
 ---
 
@@ -14,7 +14,7 @@ This feature adds automated pollutant alert notifications to `aqie-alert-back-en
 │                                                                      │
 │  pollutant-alert-scheduler (plugin)                                  │
 │    │  fires on server 'start'                                        │
-│    │  runs immediately + node-cron '*/30 * * * *'                    │
+│    │  runs immediately + node-cron '*/15 * * * *'                    │
 │    ▼                                                                 │
 │  processPollutantAlerts(db)   ◄── pollutantAlertProcessor.js         │
 │    │                                                                 │
@@ -95,17 +95,17 @@ For network failures (timeout, DNS, connection refused) `err.status` is `undefin
 
 Core business logic. Exported functions:
 
-| Function                                  | Description                                                                                                                              |
-| ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | --- | ---------------------------------------------------------------------- |
-| `processPollutantAlerts(db)`              | **Main entry point** — orchestrates the full cycle                                                                                       |
-| `filterValidAlerts(members)`              | Filters raw API members to `validationStatus==2 && (alertLevel=true                                                                      |     | informationLevel=true)`, maps to alert-detail shape including `siteId` |
-| `getMatchingUsers(users, region)`         | Returns one entry per matching user-location pair for a given region                                                                     |
-| `cleanPollutantName(pollutant)`           | Strips HTML tags from pollutant strings e.g. `O<sub>3</sub>` → `O3` — used for audit entries                                             |
-| `formatPollutantName(pollutant)`          | Strips HTML tags then maps chemical code to human-readable name e.g. `O<sub>3</sub> (O3)` → `ozone (O3)` — used in notification payloads |
-| `getAlreadyProcessedAlertIds(db)`         | Returns `Set<samplingPointId>` of alerts with status `in-progress` or `processed`                                                        |
-| `markAlertInProgress(db, alertDetail)`    | Upserts alert into `pollutant-alert-processing-state` with `status: "in-progress"`                                                       |
-| `markAlertProcessed(db, alertId)`         | Updates `pollutant-alert-processing-state` record to `status: "processed"`                                                               |
-| `sendAlertToUser(userMatch, alertDetail)` | Builds and dispatches the notification payload; returns `notificationId`                                                                 |
+| Function                                  | Description                                                                                                                                        |
+| ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `processPollutantAlerts(db)`              | **Main entry point** — orchestrates the full cycle                                                                                                 |
+| `filterValidAlerts(members)`              | Filters raw API members to `validationStatus==2` AND (`alertLevel=true` OR `informationLevel=true`); maps to alert-detail shape including `siteId` |
+| `getMatchingUsers(users, region)`         | Returns one entry per matching user-location pair for a given region                                                                               |
+| `cleanPollutantName(pollutant)`           | Strips HTML tags from pollutant strings e.g. `O<sub>3</sub>` → `O3` — used for audit entries                                                       |
+| `formatPollutantName(pollutant)`          | Strips HTML tags then maps chemical code to human-readable name e.g. `O<sub>3</sub> (O3)` → `ozone (O3)` — used in notification payloads           |
+| `getAlreadyProcessedAlertIds(db)`         | Returns `Set<samplingPointId>` of alerts with status `in-progress` or `processed`                                                                  |
+| `markAlertInProgress(db, alertDetail)`    | Upserts alert into `pollutant-alert-processing-state` with `status: "in-progress"`                                                                 |
+| `markAlertProcessed(db, alertId)`         | Updates `pollutant-alert-processing-state` record to `status: "processed"`                                                                         |
+| `sendAlertToUser(userMatch, alertDetail)` | Builds and dispatches the notification payload; returns `notificationId`                                                                           |
 
 **Pollutant name mapping**
 
@@ -135,7 +135,7 @@ If the code is unrecognised the cleaned string (HTML stripped) is returned as-is
 4. Exclude already-seen IDs          — deduplicate across cron cycles
 5. Collapse duplicates within this cycle — Ricardo returns one row per hourly breach so the same samplingPointId can appear multiple times in one response; first-occurrence wins (Ricardo orders newest-first, so the latest measurement drives the notification)
 6. For each new unique alert:
-   a. getRegionForSite(siteId)       — O(1) in-memory cache lookup; falls back to Ricardo's parsed region if siteId not in cache
+   a. getRegionForSite(siteId)       — O(1) in-memory cache lookup. If the siteId is not in the cache, the alert is **skipped** (logged as a warning, left unprocessed for a later cycle to retry); we never fall back to Ricardo's own `region` field — see "Region Resolution — Source of Truth" below
    b. markAlertInProgress()          — upsert into pollutant-alert-processing-state (uses resolved region)
    c. Query USERS where locations.region == resolvedRegion
    d. getMatchingUsers()             — expand to one entry per matching location
@@ -154,7 +154,7 @@ A Hapi plugin that owns the polling timer, using `node-cron` for scheduling.
 
 - Registers on **`server.start`** event
 - **Runs `processPollutantAlerts` immediately on startup** — ensures no alerts are missed if the service restarts between cron ticks. Already-processed alerts are safely skipped via the `pollutant-alert-processing-state` collection check (`in-progress` / `processed`)
-- Schedules subsequent runs via `node-cron` using the cron expression from config (default: `*/30 * * * *` — every 30 minutes, clock-aligned at :00 and :30 of every hour)
+- Schedules subsequent runs via `node-cron` using the cron expression from config (default: `*/15 * * * *` — every 15 minutes, clock-aligned at :00, :15, :30 and :45 of every hour)
 - Stops the cron job cleanly via `server.ext('onPostStop')` on server shutdown
 
 ---
@@ -217,6 +217,31 @@ The map is populated at server startup by calling `fetchSiteMetaData()` — whic
 
 ---
 
+### Region Resolution — Source of Truth
+
+**Region for any alert must always be resolved from `siteId` via the GeoJSON-backed site cache (`getRegionForSite` / `getSiteInfo` in `ricardoSiteAndRegionCache.js`). Ricardo's own `region` field on alert objects (`/aqsr_alerts`, `/daqi_alerts`) must be ignored entirely — even as a fallback.**
+
+**Why:**
+
+Ricardo only returns coarse region divisions and **does not sub-divide Scotland or Wales**. The system standardises on the ~18 finer GeoJSON regions used consistently everywhere:
+
+- Scotland is split into multiple regions (e.g. North Eastern Scotland, Southern Scotland, East Central Scotland, Highlands and Islands, West Central Scotland)
+- Wales is split similarly
+- `USERS.locations.region` values are stored using these finer names
+- The `siteId → region` cache is populated using the same GeoJSON via `findRegion(lat, long)`
+
+A coarse `"Scotland"` value from Ricardo can never match a user stored under `"East Central Scotland"`, so trusting it produces silent mismatches — alerts dispatched to the wrong users (or to no users at all). Treating Ricardo's region field as authoritative _anywhere_ in the pipeline — primary path, fallback, audit field — undermines the consistency guarantee.
+
+**How to apply:**
+
+- `processAlertForUsers(db, alertDetail)` calls `getRegionForSite(alertDetail.siteId)` and **skips the alert** if the cache returns `null` (siteId unknown). The alert is left in the unprocessed state so a later cycle can retry once the cache refresh picks the site up.
+- Ricardo's `region` is **never** carried through into `alertDetail`, the audit collections, or the processing-state collection. Only the siteId-derived region is persisted.
+- Cycle-level cache health is checked once (`getSiteCacheSize()` → optional `ensureSiteCachePopulated()`) so we don't skip every alert one-by-one when the cache is globally empty.
+
+The DAQI flow (`daqiAlertProcessor.js`) and the `/aqsr-alert` endpoint (`aqsrAlertController.js`) apply the same rule.
+
+---
+
 ### How `findRegion` resolves a coordinate
 
 `findRegion(lat, long)` in `src/users/utils/regionFinder.js` uses a 3-step fallback to handle the full range of coordinate positions that MetOffice's 12 km² grid and Ricardo's monitoring sites can produce — including inland water bodies, coastal edges, and offshore sea points that fall outside land polygon boundaries:
@@ -258,7 +283,7 @@ server.ext('onPreStart') → initSiteCache()
 
 Runs **once per process**. On a multi-pod deployment, each pod independently populates its own Map — no distributed locking required.
 
-**Per-alert lookup (every 30 minutes):**
+**Per-alert lookup (every 15 minutes):**
 
 ```
 getRegionForSite(siteId)   → O(1) synchronous Map.get()
@@ -306,8 +331,8 @@ ricardoApi
   ├── alertsUrl     env: RICARDO_API_ALERTS_URL
   ├── email         env: RICARDO_API_EMAIL
   ├── password      env: RICARDO_API_PASSWORD       (sensitive)
-  ├── cronSchedule  env: POLLUTANT_CRON_SCHEDULE     (default: '*/30 * * * *')
-  └── useMock       env: RICARDO_API_USE_MOCK        (default: false)
+  ├── cronSchedule  env: POLLUTANT_CRON_SCHEDULE     (default: '*/15 * * * *')
+  └── useMock       env: RICARDO_API_USE_MOCK        (default: true)
 
 alertTemplates
   ├── smsAlert          env: SMS_ALERT_TEMPLATE_ID
@@ -529,19 +554,19 @@ All log statements in `pollutantAlertProcessor.js` are prefixed with `[Pollutant
 
 ## Environment Variables
 
-| Variable                     | Default                                                 | Required |
-| ---------------------------- | ------------------------------------------------------- | -------- |
-| `RICARDO_API_EMAIL`          | _(set in config)_                                       | Yes      |
-| `RICARDO_API_PASSWORD`       | _(set in config)_                                       | Yes      |
-| `RICARDO_API_LOGIN_URL`      | `https://uk-air-api.staging.rcdo.co.uk/api/login_check` | No       |
-| `RICARDO_API_ALERTS_URL`     | `https://uk-air-api.staging.rcdo.co.uk/api/aqsr_alerts` | No       |
-| `POLLUTANT_CRON_SCHEDULE`    | `*/30 * * * *`                                          | No       |
-| `RICARDO_API_USE_MOCK`       | `false`                                                 | No       |
-| `SMS_ALERT_TEMPLATE_ID`      | _(set in config)_                                       | Yes      |
-| `SMS_ALERT_CY_TEMPLATE_ID`   | _(set in config)_                                       | Yes      |
-| `EMAIL_ALERT_TEMPLATE_ID`    | _(set in config)_                                       | Yes      |
-| `EMAIL_ALERT_CY_TEMPLATE_ID` | _(set in config)_                                       | Yes      |
-| `CHECK_AIR_QUALITY_LINK`     | `https://check-air-quality.service.gov.uk/location/`    | No       |
+| Variable                     | Default                                              | Required |
+| ---------------------------- | ---------------------------------------------------- | -------- |
+| `RICARDO_API_EMAIL`          | _(set in config)_                                    | Yes      |
+| `RICARDO_API_PASSWORD`       | _(set in config)_                                    | Yes      |
+| `RICARDO_API_LOGIN_URL`      | `https://api-ukair.defra.gov.uk/api/login_check`     | No       |
+| `RICARDO_API_ALERTS_URL`     | `https://api-ukair.defra.gov.uk/api/aqsr_alerts`     | No       |
+| `POLLUTANT_CRON_SCHEDULE`    | `*/15 * * * *`                                       | No       |
+| `RICARDO_API_USE_MOCK`       | `true`                                               | No       |
+| `SMS_ALERT_TEMPLATE_ID`      | _(set in config)_                                    | Yes      |
+| `SMS_ALERT_CY_TEMPLATE_ID`   | _(set in config)_                                    | Yes      |
+| `EMAIL_ALERT_TEMPLATE_ID`    | _(set in config)_                                    | Yes      |
+| `EMAIL_ALERT_CY_TEMPLATE_ID` | _(set in config)_                                    | Yes      |
+| `CHECK_AIR_QUALITY_LINK`     | `https://check-air-quality.service.gov.uk/location/` | No       |
 
 ---
 

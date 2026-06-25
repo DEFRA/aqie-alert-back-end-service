@@ -10,8 +10,10 @@ vi.mock('../utils/regionFinder.js', () => ({
 }))
 
 vi.mock('../utils/ricardoSiteAndRegionCache.js', () => ({
-  getSiteIdsForRegion: vi.fn(),
-  getSiteInfo: vi.fn()
+  getRegionForSite: vi.fn(),
+  getSiteInfo: vi.fn(),
+  getSiteCacheSize: vi.fn().mockReturnValue(1),
+  ensureSiteCachePopulated: vi.fn().mockResolvedValue(true)
 }))
 
 vi.mock('../utils/pollutantAlertProcessor.js', () => ({
@@ -60,8 +62,10 @@ function makeAlert(overrides = {}) {
 describe('aqsrAlertController', () => {
   let mockFetchAlerts
   let mockFindRegion
-  let mockGetSiteIdsForRegion
+  let mockGetRegionForSite
   let mockGetSiteInfo
+  let mockGetSiteCacheSize
+  let mockEnsureSiteCachePopulated
   let mockH
 
   beforeEach(async () => {
@@ -73,12 +77,29 @@ describe('aqsrAlertController', () => {
     mockFindRegion = vi.mocked(
       (await import('../utils/regionFinder.js')).findRegion
     )
-    mockGetSiteIdsForRegion = vi.mocked(
-      (await import('../utils/ricardoSiteAndRegionCache.js'))
-        .getSiteIdsForRegion
+    mockGetRegionForSite = vi.mocked(
+      (await import('../utils/ricardoSiteAndRegionCache.js')).getRegionForSite
     )
     mockGetSiteInfo = vi.mocked(
       (await import('../utils/ricardoSiteAndRegionCache.js')).getSiteInfo
+    )
+    mockGetSiteCacheSize = vi.mocked(
+      (await import('../utils/ricardoSiteAndRegionCache.js')).getSiteCacheSize
+    )
+    mockEnsureSiteCachePopulated = vi.mocked(
+      (await import('../utils/ricardoSiteAndRegionCache.js'))
+        .ensureSiteCachePopulated
+    )
+
+    // Default to a healthy, populated cache. Tests exercising the
+    // empty-cache path override these.
+    mockGetSiteCacheSize.mockReturnValue(1)
+    mockEnsureSiteCachePopulated.mockResolvedValue(true)
+
+    // The two sample sites resolve to REGION; everything else (incl. unknown
+    // siteIds) resolves to null so it can't match the requested region.
+    mockGetRegionForSite.mockImplementation((siteId) =>
+      siteId === SITE_ID_1 || siteId === SITE_ID_2 ? REGION : null
     )
 
     mockH = {
@@ -110,21 +131,43 @@ describe('aqsrAlertController', () => {
       expect(mockH.response).toHaveBeenCalledWith([])
     })
 
-    it('should return empty array when no sites are cached for the region', async () => {
+    it('should refresh an empty cache and serve results when refresh repopulates it', async () => {
       mockFindRegion.mockReturnValue(REGION)
-      mockGetSiteIdsForRegion.mockReturnValue([])
+      // Cache empty → on-demand refresh repopulates it.
+      mockGetSiteCacheSize.mockReturnValue(0)
+      mockEnsureSiteCachePopulated.mockResolvedValue(true)
+      mockFetchAlerts.mockResolvedValue({ member: [makeAlert()] })
 
       await aqsrAlertHandler(
         makeRequest({ lat: 53.8, long: -1.5, currentDay: true }),
         mockH
       )
 
+      expect(mockEnsureSiteCachePopulated).toHaveBeenCalled()
+      expect(mockFetchAlerts).toHaveBeenCalled()
+      // Proceeded past the empty-cache guard and returned the matching alert.
+      const responseArg = mockH.response.mock.calls[0][0]
+      expect(responseArg).toHaveLength(1)
+    })
+
+    it('should return empty array when cache is empty and refresh fails', async () => {
+      mockFindRegion.mockReturnValue(REGION)
+      mockGetSiteCacheSize.mockReturnValue(0)
+      mockEnsureSiteCachePopulated.mockResolvedValue(false)
+
+      await aqsrAlertHandler(
+        makeRequest({ lat: 53.8, long: -1.5, currentDay: true }),
+        mockH
+      )
+
+      expect(mockEnsureSiteCachePopulated).toHaveBeenCalled()
       expect(mockH.response).toHaveBeenCalledWith([])
+      // Refresh failed → no Ricardo call.
+      expect(mockFetchAlerts).not.toHaveBeenCalled()
     })
 
     it('should return 502 with null upstreamStatus when Ricardo throws without a status (network/timeout)', async () => {
       mockFindRegion.mockReturnValue(REGION)
-      mockGetSiteIdsForRegion.mockReturnValue([SITE_ID_1])
       mockFetchAlerts.mockRejectedValue(new Error('Connection refused'))
 
       const result = await aqsrAlertHandler(
@@ -139,7 +182,6 @@ describe('aqsrAlertController', () => {
 
     it('should pass through 4xx with upstreamStatus when Ricardo returns a client error', async () => {
       mockFindRegion.mockReturnValue(REGION)
-      mockGetSiteIdsForRegion.mockReturnValue([SITE_ID_1])
       const err = new Error('Unauthorized')
       err.status = 401
       mockFetchAlerts.mockRejectedValue(err)
@@ -156,7 +198,6 @@ describe('aqsrAlertController', () => {
 
     it('should pass through 5xx with upstreamStatus when Ricardo returns a server error', async () => {
       mockFindRegion.mockReturnValue(REGION)
-      mockGetSiteIdsForRegion.mockReturnValue([SITE_ID_1])
       const err = new Error('Service Unavailable')
       err.status = 503
       mockFetchAlerts.mockRejectedValue(err)
@@ -177,7 +218,6 @@ describe('aqsrAlertController', () => {
 
       try {
         mockFindRegion.mockReturnValue(REGION)
-        mockGetSiteIdsForRegion.mockReturnValue([SITE_ID_1])
         mockFetchAlerts.mockResolvedValue({ member: [] })
 
         await aqsrAlertHandler(
@@ -196,7 +236,6 @@ describe('aqsrAlertController', () => {
 
     it('should return active alert entries when all three conditions pass', async () => {
       mockFindRegion.mockReturnValue(REGION)
-      mockGetSiteIdsForRegion.mockReturnValue([SITE_ID_1])
       mockFetchAlerts.mockResolvedValue({
         member: [
           makeAlert({
@@ -223,7 +262,6 @@ describe('aqsrAlertController', () => {
 
     it('should set sampling-id to null when samplingPointId is missing from Ricardo response', async () => {
       mockFindRegion.mockReturnValue(REGION)
-      mockGetSiteIdsForRegion.mockReturnValue([SITE_ID_1])
       mockFetchAlerts.mockResolvedValue({
         member: [
           makeAlert({
@@ -245,7 +283,6 @@ describe('aqsrAlertController', () => {
 
     it('should return multiple entries when multiple alerts pass', async () => {
       mockFindRegion.mockReturnValue(REGION)
-      mockGetSiteIdsForRegion.mockReturnValue([SITE_ID_1, SITE_ID_2])
       mockFetchAlerts.mockResolvedValue({
         member: [
           makeAlert({ siteId: SITE_ID_1, date: recentDate }),
@@ -268,7 +305,6 @@ describe('aqsrAlertController', () => {
 
     it('should return empty array when all alerts are older than 24h', async () => {
       mockFindRegion.mockReturnValue(REGION)
-      mockGetSiteIdsForRegion.mockReturnValue([SITE_ID_1])
       mockFetchAlerts.mockResolvedValue({
         member: [makeAlert({ siteId: SITE_ID_1, date: oldDate })]
       })
@@ -283,7 +319,6 @@ describe('aqsrAlertController', () => {
 
     it('should exclude alert when siteId is not in the region set', async () => {
       mockFindRegion.mockReturnValue(REGION)
-      mockGetSiteIdsForRegion.mockReturnValue([SITE_ID_1])
       mockFetchAlerts.mockResolvedValue({
         member: [makeAlert({ siteId: 'UKA99999', date: recentDate })]
       })
@@ -298,7 +333,6 @@ describe('aqsrAlertController', () => {
 
     it('should exclude alert when alertLevel and informationLevel are both false', async () => {
       mockFindRegion.mockReturnValue(REGION)
-      mockGetSiteIdsForRegion.mockReturnValue([SITE_ID_1])
       mockFetchAlerts.mockResolvedValue({
         member: [
           makeAlert({
@@ -320,7 +354,6 @@ describe('aqsrAlertController', () => {
 
     it('should include alert when only informationLevel is true', async () => {
       mockFindRegion.mockReturnValue(REGION)
-      mockGetSiteIdsForRegion.mockReturnValue([SITE_ID_1])
       mockFetchAlerts.mockResolvedValue({
         member: [
           makeAlert({
@@ -344,7 +377,6 @@ describe('aqsrAlertController', () => {
 
     it('should return empty array when Ricardo returns no members', async () => {
       mockFindRegion.mockReturnValue(REGION)
-      mockGetSiteIdsForRegion.mockReturnValue([SITE_ID_1])
       mockFetchAlerts.mockResolvedValue({ member: [] })
 
       await aqsrAlertHandler(
@@ -364,9 +396,7 @@ describe('aqsrAlertController', () => {
         Date.now() - 20 * 60 * 60 * 1000
       ).toISOString()
 
-      mockFindRegion.mockReturnValue(REGION)
-      mockGetSiteIdsForRegion.mockReturnValue([SITE_ID_1])
-      // Ricardo returns out-of-order to prove our sort kicks in
+      mockFindRegion.mockReturnValue(REGION) // Ricardo returns out-of-order to prove our sort kicks in
       mockFetchAlerts.mockResolvedValue({
         member: [
           makeAlert({ siteId: SITE_ID_1, date: fiveHoursAgo }),

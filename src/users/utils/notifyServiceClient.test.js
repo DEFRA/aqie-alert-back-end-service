@@ -158,6 +158,22 @@ describe('notifyServiceClient', () => {
         'Notification service error: 500 - Service unavailable'
       )
     })
+
+    it('should truncate a large upstream error body in the thrown message', async () => {
+      mockResponse.ok = false
+      mockResponse.status = 502
+      mockResponse.statusText = 'Bad Gateway'
+      mockResponse.text.mockResolvedValue(`<html>${'x'.repeat(5000)}</html>`)
+
+      const payload = { phoneNumber: '07123456789', templateId }
+
+      const err = await sendNotification(payload, testRequestId).catch((e) => e)
+
+      expect(err.message.startsWith('Notification service error: 502 - ')).toBe(
+        true
+      )
+      expect(err.message.length).toBeLessThan(300)
+    })
   })
 
   describe('Network errors', () => {

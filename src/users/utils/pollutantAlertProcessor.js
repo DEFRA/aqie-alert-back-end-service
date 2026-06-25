@@ -1,13 +1,17 @@
 import { fetchAlerts } from './ricardoApiClient.js'
 import { sendNotification } from './notifyServiceClient.js'
-import { getRegionForSite } from './ricardoSiteAndRegionCache.js'
+import {
+  getRegionForSite,
+  getSiteCacheSize,
+  ensureSiteCachePopulated
+} from './ricardoSiteAndRegionCache.js'
 import { formatLocationForUrl } from './locationUtils.js'
 import { config } from '../../config.js'
 import { createLogger } from '../../common/helpers/logging/logger.js'
+import { DB_ERROR_CODE } from './constants.js'
 
 const logger = createLogger()
 const POLLUTANT_ALERT_STATUS_COLLECTION = 'pollutant-alert-processing-state'
-const DB_ERROR_CODE = 11000
 
 function cleanPollutantName(pollutant) {
   return pollutant.replaceAll(/<[^>]{0,200}>/g, '')
@@ -37,22 +41,12 @@ function formatPollutantName(pollutant) {
   return name ? `${name} (${code})` : cleaned
 }
 
-function parseRegion(rawRegion) {
-  if (!rawRegion) {
-    return rawRegion
-  }
-  try {
-    const parsed = JSON.parse(rawRegion)
-    if (Array.isArray(parsed) && parsed.length > 0) {
-      return parsed[0]
-    }
-  } catch {
-    // not JSON-encoded, use as-is
-  }
-  return rawRegion
-}
-
 function filterValidAlerts(members) {
+  // Note: Ricardo's own `region` field is deliberately NOT carried through.
+  // Region is always resolved from siteId via the GeoJSON-backed site cache in
+  // processAlertForUsers, because Ricardo's region is coarse (it does not
+  // sub-divide Scotland/Wales) and would not match the finer regions used for
+  // USERS locations.
   return members
     .filter(
       (item) =>
@@ -62,7 +56,6 @@ function filterValidAlerts(members) {
     .map((item) => ({
       'alert-id': item.samplingPointId,
       siteId: item.siteId,
-      region: parseRegion(item.region),
       pollutant: item.pollutant,
       alertText: item.alertText,
       concentration: item.concentration,
@@ -224,16 +217,18 @@ async function sendAlertToUser(userMatch, alertDetail) {
 
 async function processAlertForUsers(db, alertDetail) {
   try {
-    const lookedUpRegion = getRegionForSite(alertDetail.siteId)
-    if (!lookedUpRegion) {
+    const region = getRegionForSite(alertDetail.siteId)
+    if (!region) {
+      // Cache is healthy (the cycle-level guard ensures that) but this siteId
+      // is unknown. We never trust Ricardo's coarse region, so without a cache
+      // hit we cannot reliably match users — skip and leave it unprocessed so a
+      // later cycle can retry once the site appears in the cache.
       logger.warn(
-        `[Pollutant] Alert ${alertDetail['alert-id']}: siteId "${alertDetail.siteId}" not found in site cache, falling back to parsed region "${alertDetail.region}"`
+        `[Pollutant] Alert ${alertDetail['alert-id']}: siteId "${alertDetail.siteId}" not found in site cache; cannot resolve region, skipping`
       )
+      return
     }
-    const resolvedDetail = {
-      ...alertDetail,
-      region: lookedUpRegion ?? alertDetail.region
-    }
+    const resolvedDetail = { ...alertDetail, region }
 
     await markAlertInProgress(db, resolvedDetail)
 
@@ -341,6 +336,19 @@ export async function processPollutantAlerts(db) {
 
   if (uniqueNewAlerts.length === 0) {
     return
+  }
+
+  // Region resolution depends entirely on the site cache. If it's empty the
+  // startup fetch likely failed — try one on-demand refresh, and skip the cycle
+  // if it still can't be populated rather than skipping every alert one by one.
+  if (getSiteCacheSize() === 0) {
+    const populated = await ensureSiteCachePopulated()
+    if (!populated) {
+      logger.info(
+        '[Pollutant] Site cache empty and refresh failed; skipping cycle (will retry on next run)'
+      )
+      return
+    }
   }
 
   for (const alertDetail of uniqueNewAlerts) {

@@ -10,3 +10,4 @@ coverage
 .eslintcache
 .env
 mongodb-binaries/
+memory/
