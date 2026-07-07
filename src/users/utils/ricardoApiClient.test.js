@@ -29,7 +29,8 @@ const CONFIG_VALUES = {
   'ricardoApi.password': 'secret',
   'ricardoApi.alertsUrl': 'https://ricardo.test/alerts',
   'ricardoApi.daqiAlertsUrl': 'https://ricardo.test/daqi',
-  'ricardoApi.siteMetaDataUrl': 'https://ricardo.test/sites'
+  'ricardoApi.siteMetaDataUrl': 'https://ricardo.test/sites',
+  'ricardoApi.daqiMockUrl': 'https://wiremock.test/daqi_alerts'
 }
 
 function makeResponse({ ok = true, status = 200, json = {}, text = '' } = {}) {
@@ -279,7 +280,7 @@ describe('ricardoApiClient', () => {
       await fetchDaqiAlerts({ startDate: '2026-02-01', endDate: '2026-02-02' })
 
       expect(getCall(fetch)[0]).toBe(
-        'https://ricardo.test/daqi?page=1&start-date=2026-02-01&end-date=2026-02-02'
+        'https://ricardo.test/daqi?start-date=2026-02-01&end-date=2026-02-02'
       )
     })
 
@@ -288,21 +289,30 @@ describe('ricardoApiClient', () => {
 
       await fetchDaqiAlerts()
 
-      expect(getCall(fetch)[0]).toBe('https://ricardo.test/daqi?page=1')
+      expect(getCall(fetch)[0]).toBe('https://ricardo.test/daqi')
     })
 
-    it('returns the freshly-dated mock response when useMock is true', async () => {
-      vi.useFakeTimers()
-      vi.setSystemTime(new Date('2026-06-15T12:00:00Z'))
-      const { fetchDaqiAlerts } = await setup({ useMock: true })
+    it('calls the WireMock stub URL when useMock is true and returns its response', async () => {
+      const wiremockResponse = { totalItems: 2, member: [{ id: 1 }, { id: 2 }] }
+      const { fetchDaqiAlerts, fetch } = await setup({ useMock: true })
+      fetch.mockResolvedValue(makeResponse({ json: wiremockResponse }))
 
       const data = await fetchDaqiAlerts()
 
-      expect(data.totalItems).toBe(3)
-      expect(data.member).toHaveLength(3)
-      // dates are regenerated relative to "now" (2h and 8h ago)
-      expect(data.member[0].date).toBe('2026-06-15T10:00:00.000Z')
-      expect(data.member[1].date).toBe('2026-06-15T04:00:00.000Z')
+      expect(data).toEqual(wiremockResponse)
+      expect(fetch).toHaveBeenCalledWith(
+        'https://wiremock.test/daqi_alerts',
+        expect.objectContaining({ signal: expect.any(Object) })
+      )
+    })
+
+    it('throws when useMock is true and the WireMock stub returns a non-ok response', async () => {
+      const { fetchDaqiAlerts, fetch } = await setup({ useMock: true })
+      fetch.mockResolvedValue(makeResponse({ ok: false, status: 503 }))
+
+      await expect(fetchDaqiAlerts()).rejects.toThrow(
+        'WireMock DAQI stub returned 503'
+      )
     })
   })
 

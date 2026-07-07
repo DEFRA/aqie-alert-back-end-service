@@ -7,21 +7,30 @@ import { createLogger } from '../../common/helpers/logging/logger.js'
 const logger = createLogger()
 
 /**
- * Ricardo can return the same logical breach (same alert-id) multiple times in
- * a single response. Collapse to first occurrence so a single cron cycle
- * doesn't double-process a row. The downstream audit unique index would reject
- * the second insert anyway — this avoids the wasted Notify calls and noisy
- * logs.
+ * Ricardo can return the same logical breach multiple times in a single
+ * response. Collapse to first occurrence so a single cron cycle doesn't
+ * double-process a row.
  *
- * @param {Array<{ 'alert-id': string }>} alerts
+ * The key extractor defaults to `alert['alert-id']` (the existing pollutant-
+ * alert behaviour). DAQI passes its own `combo-key` extractor so two rows that
+ * differ only by `date` (same physical breach, refreshed reading) collapse to
+ * one — necessary because DAQI dedups by (samplingPointId, siteId, pollutant)
+ * rather than by Ricardo's date-bearing alert-id.
+ *
+ * @param {Array} alerts
+ * @param {(alert: any) => string} [keyFn] defaults to `(a) => a['alert-id']`
  * @returns {Array} unique alerts in original order
  */
-export function collapseInCycleDuplicates(alerts) {
+export function collapseInCycleDuplicates(
+  alerts,
+  keyFn = (a) => a['alert-id']
+) {
   const seen = new Set()
   const unique = []
   for (const alert of alerts) {
-    if (!seen.has(alert['alert-id'])) {
-      seen.add(alert['alert-id'])
+    const key = keyFn(alert)
+    if (!seen.has(key)) {
+      seen.add(key)
       unique.push(alert)
     }
   }

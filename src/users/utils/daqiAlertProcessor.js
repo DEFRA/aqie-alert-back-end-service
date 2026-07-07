@@ -2,11 +2,8 @@ import { fetchDaqiAlerts } from './ricardoApiClient.js'
 import { sendNotification } from './notifyServiceClient.js'
 import { getRegionForSite } from './ricardoSiteAndRegionCache.js'
 import { formatLocationForUrl } from './locationUtils.js'
-import {
-  cleanPollutantName,
-  formatPollutantName
-} from './pollutantAlertProcessor.js'
-import { getRollingDayWindow } from './dateRangeUtils.js'
+import { cleanPollutantName } from './pollutantAlertProcessor.js'
+import { getRollingDayWindow, TWENTY_FOUR_HOURS_MS } from './dateRangeUtils.js'
 import {
   collapseInCycleDuplicates,
   ensureCacheReadyForCycle,
@@ -15,14 +12,57 @@ import {
 } from './alertCycleUtils.js'
 import { config } from '../../config.js'
 import { createLogger } from '../../common/helpers/logging/logger.js'
-import { DB_ERROR_CODE } from './constants.js'
+import { DB_ERROR_CODE, DAQI_VERY_HIGH_THRESHOLD } from './constants.js'
 
 const logger = createLogger()
 const DAQI_ALERT_STATUS_COLLECTION = 'daqi-alert-processing-state'
 const DAQI_ALERTS_AUDIT_COLLECTION = 'daqi-alerts-audit'
 
+/**
+ * Audit-side key: identifies a SPECIFIC Ricardo emission so each
+ * `daqi-alerts-audit` row traces back to the exact alert payload that
+ * triggered it. Includes `date` so two readings of the same physical breach
+ * produce distinct audit identifiers.
+ */
 function buildAlertKey(member) {
   return `${member.samplingPointId}-${member.siteId}-${member.date}`
+}
+
+/**
+ * MongoDB query shape for a NEW event row in `daqi-alert-processing-state`.
+ * Compound key: samplingPointId + alert-started-timestamp.
+ * Each continuous breach event produces one document. A beyond-24h gap
+ * produces a new document (different alert-started-timestamp).
+ * The collection should have a unique index on
+ * `{ samplingPointId: 1, 'alert-started-timestamp': 1 }`.
+ */
+function buildNewEventStateQuery(member) {
+  return {
+    samplingPointId: member.samplingPointId,
+    'alert-started-timestamp': member.date
+  }
+}
+
+/**
+ * MongoDB query shape for updating an EXISTING event row.
+ * Uses the alert-started-timestamp from the existing state row so the
+ * update targets the correct document for the current event window.
+ */
+function buildExistingEventStateQuery(samplingPointId, alertStartedTimestamp) {
+  return {
+    samplingPointId,
+    'alert-started-timestamp': alertStartedTimestamp
+  }
+}
+
+/**
+ * Returns the Notify-template `daqi-level` value for a DAQI numeric reading.
+ *   DAQI 7–9  → 'high'
+ *   DAQI ≥ 10 → 'very high'
+ * Values below 7 should never reach here (they're filtered out upstream).
+ */
+function getDaqiLabel(daqiValue) {
+  return daqiValue >= DAQI_VERY_HIGH_THRESHOLD ? 'very high' : 'high'
 }
 
 function filterValidDaqiAlerts(members, threshold) {
@@ -51,35 +91,48 @@ function filterValidDaqiAlerts(members, threshold) {
     }))
 }
 
-async function getAlreadyProcessedAlertKeys(db) {
-  const existing = await db
+/**
+ * Bulk-loads the most recent state row per samplingPointId for all candidates.
+ * Sorted by alert-started-timestamp descending so that when multiple event
+ * rows exist for the same samplingPointId (each beyond-24h gap creates a new
+ * row), the first map.set wins — giving us the latest event row for each id.
+ * @returns {Promise<Map<number, object>>}
+ */
+async function loadRecentStateRowsBySamplingPointId(db, candidates) {
+  if (candidates.length === 0) {
+    return new Map()
+  }
+  const samplingPointIds = candidates.map((c) => c.samplingPointId)
+  const rows = await db
     .collection(DAQI_ALERT_STATUS_COLLECTION)
-    .find({ 'process-status': { $in: ['in-progress', 'processed'] } })
-    .project({ samplingPointId: 1, siteId: 1, date: 1 })
+    .find({ samplingPointId: { $in: samplingPointIds } })
+    .sort({ 'alert-started-timestamp': -1 })
     .toArray()
-  return new Set(
-    existing.map((doc) => `${doc.samplingPointId}-${doc.siteId}-${doc.date}`)
-  )
+  const map = new Map()
+  for (const row of rows) {
+    if (!map.has(row.samplingPointId)) {
+      map.set(row.samplingPointId, row)
+    }
+  }
+  return map
 }
 
 async function markAlertInProgress(db, alertDetail) {
+  // New event row: compound key (samplingPointId + alert-started-timestamp).
+  // Beyond-24h gap → different alert-started-timestamp → new document inserted.
+  // Within-24h repeat → same compound key → existing document updated.
   await db.collection(DAQI_ALERT_STATUS_COLLECTION).updateOne(
-    {
-      samplingPointId: alertDetail.samplingPointId,
-      siteId: alertDetail.siteId,
-      date: alertDetail.date
-    },
+    buildNewEventStateQuery(alertDetail),
     {
       $set: {
-        'alert-id': alertDetail['alert-id'],
         samplingPointId: alertDetail.samplingPointId,
         siteId: alertDetail.siteId,
-        date: alertDetail.date,
+        pollutant: cleanPollutantName(alertDetail.pollutant),
         daqi: alertDetail.daqi,
         region: alertDetail.region,
-        pollutant: alertDetail.pollutant,
+        lastUpdatedFromRicardo: alertDetail.date,
         'process-status': 'in-progress',
-        'alert-started-timestamp': new Date()
+        'alert-started-timestamp': alertDetail.date
       }
     },
     { upsert: true }
@@ -87,19 +140,37 @@ async function markAlertInProgress(db, alertDetail) {
 }
 
 async function markAlertProcessed(db, alertDetail) {
-  await db.collection(DAQI_ALERT_STATUS_COLLECTION).updateOne(
-    {
-      samplingPointId: alertDetail.samplingPointId,
-      siteId: alertDetail.siteId,
-      date: alertDetail.date
-    },
-    {
+  await db
+    .collection(DAQI_ALERT_STATUS_COLLECTION)
+    .updateOne(buildNewEventStateQuery(alertDetail), {
       $set: {
-        'process-status': 'processed',
-        processedAt: new Date()
+        'process-status': 'processed'
       }
-    }
-  )
+    })
+}
+
+/**
+ * Bumps `lastUpdatedFromRicardo` (and last-seen `daqi`) for a combo whose
+ * users were already notified within the 24h window. No notification is sent
+ * and no audit row is written — the row is just kept current for traceability.
+ * Uses the existing row's alert-started-timestamp to target the correct
+ * event document — not the incoming alert date.
+ */
+async function updateStateForExistingAlert(db, alertDetail, existingRow) {
+  await db
+    .collection(DAQI_ALERT_STATUS_COLLECTION)
+    .updateOne(
+      buildExistingEventStateQuery(
+        alertDetail.samplingPointId,
+        existingRow['alert-started-timestamp']
+      ),
+      {
+        $set: {
+          lastUpdatedFromRicardo: alertDetail.date,
+          daqi: alertDetail.daqi
+        }
+      }
+    )
 }
 
 async function insertDaqiAuditEntry(db, alertDetail, userMatch) {
@@ -182,8 +253,7 @@ async function sendAlertToUser(userMatch, alertDetail) {
     alertId: String(alertDetail['alert-id']),
     personalisation: {
       location: userMatch.location,
-      daqi: String(alertDetail.daqi),
-      Pollutant: formatPollutantName(alertDetail.pollutant),
+      'daqi-level': getDaqiLabel(alertDetail.daqi),
       checkAirQualityLink
     }
   }
@@ -266,6 +336,39 @@ async function fetchDaqiAlertsForCycle() {
   }
 }
 
+/**
+ * Classifies one alert against its (optional) existing state row.
+ *
+ * Business rule: the 24h dedup window is anchored to `lastUpdatedFromRicardo`
+ * (the timestamp of Ricardo's most-recent reading for this combo). As long as
+ * Ricardo keeps confirming the breach at least every 24h, we treat it as one
+ * continuous event and don't re-notify. If Ricardo goes quiet for >24h and
+ * the breach then reappears, that's a fresh event → notify again.
+ *
+ *   'skip-stuck'  — a prior cycle marked the combo in-progress and never
+ *                   finished (mongo-lock guarantees serial cycles, so seeing
+ *                   'in-progress' at cycle start means the prior cycle
+ *                   crashed).
+ *   'update-only' — the combo was last seen by Ricardo within 24h; bump
+ *                   lastUpdatedFromRicardo, do not re-notify.
+ *   'new'         — no row, OR Ricardo hasn't confirmed this combo for >24h.
+ */
+function classifyAlert(existingRow, now) {
+  if (!existingRow) {
+    return 'new'
+  }
+  if (existingRow['process-status'] === 'in-progress') {
+    return 'skip-stuck'
+  }
+  const lastUpdatedMs = existingRow.lastUpdatedFromRicardo
+    ? new Date(existingRow.lastUpdatedFromRicardo).getTime()
+    : 0
+  if (now - lastUpdatedMs <= TWENTY_FOUR_HOURS_MS) {
+    return 'update-only'
+  }
+  return 'new'
+}
+
 export async function processDaqiAlerts(db) {
   logger.info('[DAQI] Starting DAQI alert processing cycle')
 
@@ -289,35 +392,70 @@ export async function processDaqiAlerts(db) {
     return
   }
 
-  const processedKeys = await getAlreadyProcessedAlertKeys(db)
-  const newAlerts = validAlerts.filter(
-    (alert) => !processedKeys.has(alert['alert-id'])
+  // Collapse rows in this response that share the same samplingPointId but
+  // differ in date — Ricardo can emit several refresh-readings of the same
+  // breach in one response.
+  const uniqueCandidates = collapseInCycleDuplicates(
+    validAlerts,
+    (a) => a.samplingPointId
   )
-  const uniqueNewAlerts = collapseInCycleDuplicates(newAlerts)
-
   logger.info(
-    `[DAQI] ${uniqueNewAlerts.length} unique alerts to process (${newAlerts.length - uniqueNewAlerts.length} duplicate rows collapsed, ${processedKeys.size} already processed in prior cycles)`
+    `[DAQI] ${uniqueCandidates.length} unique candidate alerts (${validAlerts.length - uniqueCandidates.length} in-cycle duplicates collapsed by samplingPointId)`
   )
-  if (uniqueNewAlerts.length === 0) {
-    return
-  }
+
   if (!(await ensureCacheReadyForCycle('[DAQI]'))) {
     return
   }
 
-  for (const alertDetail of uniqueNewAlerts) {
+  // One bulk read for all candidate samplingPointIds, then classify each.
+  const stateBySamplingPointId = await loadRecentStateRowsBySamplingPointId(
+    db,
+    uniqueCandidates
+  )
+  const now = Date.now()
+  const counts = { new: 0, 'update-only': 0, 'skip-stuck': 0 }
+
+  for (const alertDetail of uniqueCandidates) {
+    const existing = stateBySamplingPointId.get(alertDetail.samplingPointId)
+    const verdict = classifyAlert(existing, now)
+    counts[verdict]++
+
+    if (verdict === 'skip-stuck') {
+      logger.info(
+        `[DAQI] Skipping samplingPointId ${alertDetail.samplingPointId}: prior cycle left it in-progress (likely crashed mid-process — manual review needed)`
+      )
+      continue
+    }
+
+    if (verdict === 'update-only') {
+      await updateStateForExistingAlert(db, alertDetail, existing)
+      logger.info(
+        `[DAQI] Update-only for samplingPointId ${alertDetail.samplingPointId} (last Ricardo reading at ${existing.lastUpdatedFromRicardo}, within 24h)`
+      )
+      continue
+    }
+
+    // verdict === 'new'
     await processAlertForUsers(db, alertDetail)
   }
 
+  logger.info(
+    `[DAQI] Cycle summary ${JSON.stringify({
+      candidates: uniqueCandidates.length,
+      new: counts.new,
+      updateOnly: counts['update-only'],
+      skipStuck: counts['skip-stuck']
+    })}`
+  )
   logger.info('[DAQI] DAQI alert processing cycle completed')
 }
 
 export {
   filterValidDaqiAlerts,
   getMatchingUsers,
-  getAlreadyProcessedAlertKeys,
   markAlertInProgress,
   markAlertProcessed,
   sendAlertToUser,
-  buildAlertKey
+  buildAlertKey,
+  classifyAlert
 }

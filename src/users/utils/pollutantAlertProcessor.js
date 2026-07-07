@@ -23,13 +23,8 @@ const POLLUTANT_NAME_MAP = {
   O3: 'ozone',
   NO2: 'nitrogen dioxide',
   SO2: 'sulphur dioxide',
-  CO: 'carbon monoxide',
   PM10: 'PM10',
-  'PM2.5': 'PM2.5',
-  NO: 'nitrogen monoxide',
-  C6H6: 'benzene',
-  Pb: 'lead',
-  '1,3-BD': '1,3-butadiene'
+  'PM2.5': 'PM2.5'
 }
 
 function formatPollutantName(pollutant) {

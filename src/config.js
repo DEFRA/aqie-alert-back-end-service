@@ -205,6 +205,12 @@ const config = convict({
       default: true,
       env: 'RICARDO_API_USE_MOCK'
     },
+    daqiMockUrl: {
+      doc: 'WireMock stub URL for DAQI alerts (used when RICARDO_API_USE_MOCK=true)',
+      format: String,
+      default: 'https://ricardomockalerts.wiremockapi.cloud/api/daqi_alerts',
+      env: 'RICARDO_API_DAQI_MOCK_URL'
+    },
     siteMetaDataUrl: {
       doc: 'Ricardo API site metadata endpoint (used to map siteId → region)',
       format: String,

@@ -53,6 +53,8 @@ const { sendNotification } = await import('./notifyServiceClient.js')
 const { getRegionForSite, getSiteCacheSize, ensureSiteCachePopulated } =
   await import('./ricardoSiteAndRegionCache.js')
 
+const SAMPLE_ALERT_DATE = '2026-06-08T02:00:00+01:00'
+
 const sampleAlert = {
   '@id': '/api/d_a_q_i_alerts/7716220260528',
   '@type': 'DAQIAlert',
@@ -64,7 +66,7 @@ const sampleAlert = {
   level: 'High',
   pollutant: 'O<sub>3</sub> (O3)',
   validationStatus: 2,
-  date: '2026-06-08T02:00:00+01:00'
+  date: SAMPLE_ALERT_DATE
 }
 
 describe('daqiAlertProcessor', () => {
@@ -192,8 +194,7 @@ describe('daqiAlertProcessor', () => {
           phoneNumber: '07700900111',
           personalisation: expect.objectContaining({
             location: 'Cardiff',
-            daqi: '8',
-            Pollutant: 'ozone (O3)',
+            'daqi-level': 'high',
             checkAirQualityLink:
               'https://check-air-quality.service.gov.uk/location/cardiff?lang=en'
           })
@@ -225,7 +226,8 @@ describe('daqiAlertProcessor', () => {
           templateId: 'daqi-email-template-id-cy',
           emailAddress: 'dewi@example.com',
           personalisation: expect.objectContaining({
-            Pollutant: 'nitrogen dioxide (NO2)',
+            location: 'Cardiff',
+            'daqi-level': 'high',
             checkAirQualityLink:
               'https://check-air-quality.service.gov.uk/location/cardiff?lang=cy',
             unsubscribeLink:
@@ -234,6 +236,21 @@ describe('daqiAlertProcessor', () => {
         }),
         expect.any(String)
       )
+    })
+
+    it('uses "very high" daqi-level when alertDetail.daqi is 10', async () => {
+      sendNotification.mockResolvedValueOnce({ notificationId: 'notif-vh' })
+      await sendAlertToUser(
+        {
+          userContact: '07700900111',
+          alertType: 'sms',
+          location: 'Cardiff',
+          lang: 'en'
+        },
+        { 'alert-id': 'X', daqi: 10, pollutant: 'O3' }
+      )
+      const [[payload]] = sendNotification.mock.calls
+      expect(payload.personalisation['daqi-level']).toBe('very high')
     })
 
     it('defaults lang to en when userMatch.lang is falsy', async () => {
@@ -255,8 +272,17 @@ describe('daqiAlertProcessor', () => {
 
   describe('processDaqiAlerts', () => {
     function makeDb() {
+      // stateCollection.find supports BOTH chains the code base might use:
+      //   find().toArray()             (new combo-key lookup)
+      //   find().project().toArray()   (legacy / other callers)
+      // Default: empty result. Individual tests override per-call via
+      // db._state.find.mockReturnValueOnce(...).
       const stateCollection = {
         find: vi.fn(() => ({
+          toArray: vi.fn().mockResolvedValue([]),
+          sort: vi.fn(function () {
+            return this
+          }),
           project: vi.fn(() => ({ toArray: vi.fn().mockResolvedValue([]) }))
         })),
         updateOne: vi.fn().mockResolvedValue(undefined)
@@ -318,21 +344,34 @@ describe('daqiAlertProcessor', () => {
 
       await processDaqiAlerts(db)
 
+      // State collection is keyed by samplingPointId alone (Ricardo guarantees
+      // samplingPointId identifies exactly one (pollutant, location) pair).
+      // siteId and pollutant are stored on the row as informational context.
+      // 'alert-started-timestamp' mirrors Ricardo's `date` (the breach
+      // reading timestamp), not server time — matches lastUpdatedFromRicardo
+      // on the initial write, then stays fixed while lastUpdated bumps.
       expect(db._state.updateOne).toHaveBeenCalledWith(
         {
           samplingPointId: 77162,
-          siteId: 'UKA00819',
-          date: '2026-06-08T02:00:00+01:00'
+          'alert-started-timestamp': SAMPLE_ALERT_DATE
         },
-        expect.objectContaining({
-          $set: expect.objectContaining({
+        {
+          $set: {
+            samplingPointId: 77162,
+            siteId: 'UKA00819',
+            pollutant: 'O3 (O3)',
+            daqi: 8,
+            region: 'Wales',
+            lastUpdatedFromRicardo: SAMPLE_ALERT_DATE,
             'process-status': 'in-progress',
-            'alert-started-timestamp': expect.any(Date)
-          })
-        }),
+            'alert-started-timestamp': SAMPLE_ALERT_DATE
+          }
+        },
         { upsert: true }
       )
 
+      // Audit row still carries the date-bearing alert-id so each notification
+      // traces back to a specific Ricardo emission.
       expect(db._audit.insertOne).toHaveBeenCalledWith(
         expect.objectContaining({
           'alert-id': '77162-UKA00819-2026-06-08T02:00:00+01:00',
@@ -356,30 +395,105 @@ describe('daqiAlertProcessor', () => {
         }
       )
 
+      // The final state update flips to 'processed'. The 24h dedup window is
+      // anchored to `lastUpdatedFromRicardo` (set by markAlertInProgress and
+      // updateStateForExistingAlert), so markAlertProcessed only needs to
+      // update the status flag.
       expect(db._state.updateOne).toHaveBeenLastCalledWith(
         {
           samplingPointId: 77162,
-          siteId: 'UKA00819',
-          date: '2026-06-08T02:00:00+01:00'
+          'alert-started-timestamp': SAMPLE_ALERT_DATE
         },
-        expect.objectContaining({
-          $set: expect.objectContaining({ 'process-status': 'processed' })
-        })
+        {
+          $set: {
+            'process-status': 'processed'
+          }
+        }
       )
     })
 
-    it('skips alerts already in processed/in-progress state', async () => {
+    it('does NOT re-notify when Ricardo last confirmed this combo within the last 24h (update-only)', async () => {
+      const db = makeDb()
+      const fiveHoursAgo = new Date(
+        Date.now() - 5 * 60 * 60 * 1000
+      ).toISOString()
+      db._state.find.mockReturnValueOnce({
+        sort: vi.fn(function () {
+          return this
+        }),
+        toArray: vi.fn().mockResolvedValue([
+          {
+            samplingPointId: 77162,
+            siteId: 'UKA00819',
+            pollutant: 'O<sub>3</sub> (O3)',
+            'process-status': 'processed',
+            lastUpdatedFromRicardo: fiveHoursAgo
+          }
+        ])
+      })
+      fetchDaqiAlerts.mockResolvedValueOnce({ member: [sampleAlert] })
+
+      await processDaqiAlerts(db)
+
+      // No user notification this cycle
+      expect(sendNotification).not.toHaveBeenCalled()
+      // But the state row was bumped with lastUpdatedFromRicardo
+      expect(db._state.updateOne).toHaveBeenCalledWith(
+        { samplingPointId: 77162 },
+        {
+          $set: expect.objectContaining({
+            lastUpdatedFromRicardo: SAMPLE_ALERT_DATE,
+            daqi: 8
+          })
+        }
+      )
+    })
+
+    it('re-notifies when Ricardo has been quiet on this combo for more than 24h', async () => {
+      const db = makeDb()
+      const twentyFiveHoursAgo = new Date(
+        Date.now() - 25 * 60 * 60 * 1000
+      ).toISOString()
+      db._state.find.mockReturnValueOnce({
+        sort: vi.fn(function () {
+          return this
+        }),
+        toArray: vi.fn().mockResolvedValue([
+          {
+            samplingPointId: 77162,
+            siteId: 'UKA00819',
+            pollutant: 'O<sub>3</sub> (O3)',
+            'process-status': 'processed',
+            lastUpdatedFromRicardo: twentyFiveHoursAgo
+          }
+        ])
+      })
+      fetchDaqiAlerts.mockResolvedValueOnce({ member: [sampleAlert] })
+      sendNotification.mockResolvedValueOnce({
+        notificationId: 'notif-next-day'
+      })
+
+      await processDaqiAlerts(db)
+
+      expect(sendNotification).toHaveBeenCalledTimes(1)
+    })
+
+    it('skips a combo left in-progress by a prior crashed cycle', async () => {
       const db = makeDb()
       db._state.find.mockReturnValueOnce({
-        project: vi.fn(() => ({
-          toArray: vi.fn().mockResolvedValue([
-            {
-              samplingPointId: 77162,
-              siteId: 'UKA00819',
-              date: '2026-06-08T02:00:00+01:00'
-            }
-          ])
-        }))
+        sort: vi.fn(function () {
+          return this
+        }),
+        toArray: vi.fn().mockResolvedValue([
+          {
+            samplingPointId: 77162,
+            siteId: 'UKA00819',
+            pollutant: 'O<sub>3</sub> (O3)',
+            'process-status': 'in-progress'
+            // 'in-progress' at cycle start means the prior cycle crashed —
+            // mongo-lock serialises cycles so no concurrent cycle can hold it.
+          }
+        ])
       })
       fetchDaqiAlerts.mockResolvedValueOnce({ member: [sampleAlert] })
 
@@ -387,6 +501,23 @@ describe('daqiAlertProcessor', () => {
 
       expect(sendNotification).not.toHaveBeenCalled()
       expect(db._state.updateOne).not.toHaveBeenCalled()
+    })
+
+    it('collapses rows with same combo but different dates into one notification', async () => {
+      const db = makeDb()
+      fetchDaqiAlerts.mockResolvedValueOnce({
+        member: [
+          sampleAlert,
+          { ...sampleAlert, date: '2026-06-08T03:00:00+01:00', daqi: 9 },
+          { ...sampleAlert, date: '2026-06-08T04:00:00+01:00', daqi: 8 }
+        ]
+      })
+      sendNotification.mockResolvedValue({ notificationId: 'notif-x' })
+
+      await processDaqiAlerts(db)
+
+      // Three rows, same (samplingPointId, siteId, pollutant) — should collapse to one notification
+      expect(sendNotification).toHaveBeenCalledTimes(1)
     })
 
     it('drops alerts that do not meet threshold or validation status', async () => {

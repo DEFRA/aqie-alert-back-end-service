@@ -84,16 +84,37 @@ async function handleCurrentDayMode(request, h) {
   )
 
   // For each alert, resolve its region from siteId via the cache and keep it
-  // only if that region matches the caller's region.
-  const activeAlerts = members.filter(
-    (alert) =>
-      isWithinLast24Hours(alert.date) &&
-      getRegionForSite(alert.siteId) === region &&
-      isBreachConfirmed(alert)
-  )
+  // only if that region matches the caller's region. Track per-predicate
+  // pass counts independently so the log surfaces *which* check rejected
+  // the rows when activeAlerts ends up empty.
+  let inWindow = 0
+  let inRegion = 0
+  let confirmed = 0
+  const activeAlerts = members.filter((alert) => {
+    const wasInWindow = isWithinLast24Hours(alert.date)
+    const wasInRegion = getRegionForSite(alert.siteId) === region
+    const wasConfirmed = isBreachConfirmed(alert)
+    if (wasInWindow) {
+      inWindow++
+    }
+    if (wasInRegion) {
+      inRegion++
+    }
+    if (wasConfirmed) {
+      confirmed++
+    }
+    return wasInWindow && wasInRegion && wasConfirmed
+  })
 
   logger.info(
-    `${LOG_PREFIX} current-day mode: ${activeAlerts.length} active alert(s) within 24h for region "${region}" ${JSON.stringify({ requestId })}`
+    `${LOG_PREFIX} current-day filter for region "${region}": ${JSON.stringify({
+      requestId,
+      ricardo: members.length,
+      in_window: inWindow,
+      in_region: inRegion,
+      confirmed,
+      active: activeAlerts.length
+    })}`
   )
 
   return h
