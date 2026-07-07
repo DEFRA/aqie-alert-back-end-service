@@ -105,7 +105,6 @@ async function handleCurrentDayMode(request, h) {
     }
     return wasInWindow && wasInRegion && wasConfirmed
   })
-
   logger.info(
     `${LOG_PREFIX} current-day filter for region "${region}": ${JSON.stringify({
       requestId,
