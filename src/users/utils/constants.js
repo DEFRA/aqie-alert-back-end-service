@@ -5,3 +5,4 @@ export const USER_NOT_FOUND_STATUS_CODE = 404
 export const STATUS_OK = 200
 export const INTERNAL_SERVER_ERROR = 500
 export const DB_ERROR_CODE = 11000
+export const DAQI_VERY_HIGH_THRESHOLD = 10

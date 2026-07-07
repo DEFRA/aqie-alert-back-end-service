@@ -253,65 +253,22 @@ export async function fetchAlerts(options = {}) {
 }
 
 // ---------------------------------------------------------------------------
-// Mock DAQI alert data — used when RICARDO_API_USE_MOCK=true.
-// Live DAQI breaches are rare in staging, so a stable mock keeps the
-// front-end /daqi-alert page populated for hook-up and visual testing.
-// Dates are regenerated on every call so they always fall inside the
-// rolling 24-hour window (the controller's within-24h filter would otherwise
-// trim them out if the server has been running for more than a day).
+// WireMock DAQI stub — used when RICARDO_API_USE_MOCK=true.
+// Calls the WireMock Cloud stub instead of the real Ricardo DAQI API.
 // ---------------------------------------------------------------------------
-function buildMockDaqiResponse() {
-  const now = Date.now()
-  const recent = new Date(now - 2 * 60 * 60 * 1000).toISOString()
-  const older = new Date(now - 8 * 60 * 60 * 1000).toISOString()
+const WIREMOCK_DAQI_URL = config.get('ricardoApi.daqiMockUrl')
 
-  return {
-    '@context': '/api/contexts/DAQIAlert',
-    '@id': '/api/daqi_alerts',
-    '@type': 'Collection',
-    totalItems: 3,
-    member: [
-      {
-        '@id': '/api/d_a_q_i_alerts/7716220260528',
-        '@type': 'DAQIAlert',
-        id: 7716220260528,
-        samplingPointId: 77162,
-        siteId: 'UKA00819',
-        region: 'Wales',
-        daqi: 7,
-        level: 'High',
-        pollutant: 'O<sub>3</sub> (O3)',
-        validationStatus: 2,
-        date: recent
-      },
-      {
-        '@id': '/api/d_a_q_i_alerts/7716220260529',
-        '@type': 'DAQIAlert',
-        id: 7716220260529,
-        samplingPointId: 12401,
-        siteId: 'UKA00524',
-        region: 'Yorkshire & Humber',
-        daqi: 8,
-        level: 'High',
-        pollutant: 'NO<sub>2</sub> (NO2)',
-        validationStatus: 2,
-        date: older
-      },
-      {
-        '@id': '/api/d_a_q_i_alerts/7716220260530',
-        '@type': 'DAQIAlert',
-        id: 7716220260530,
-        samplingPointId: 1258,
-        siteId: 'UKA00482',
-        region: 'North West & Merseyside',
-        daqi: 9,
-        level: 'Very High',
-        pollutant: 'SO<sub>2</sub> (SO2)',
-        validationStatus: 2,
-        date: recent
-      }
-    ]
+async function fetchDaqiFromWireMock() {
+  logger.info(
+    `[MOCK] Fetching DAQI alerts from WireMock ${JSON.stringify({ url: WIREMOCK_DAQI_URL })}`
+  )
+  const response = await fetch(WIREMOCK_DAQI_URL, {
+    signal: AbortSignal.timeout(RICARDO_REQUEST_TIMEOUT_MS)
+  })
+  if (!response.ok) {
+    throw new Error(`WireMock DAQI stub returned ${response.status}`)
   }
+  return response.json()
 }
 
 async function fetchDaqiAlertsFromRicardo(options = {}) {
@@ -319,8 +276,8 @@ async function fetchDaqiAlertsFromRicardo(options = {}) {
   const { startDate, endDate } = options
   const daqiUrl =
     startDate && endDate
-      ? `${baseDaqiUrl}?page=1&start-date=${startDate}&end-date=${endDate}`
-      : `${baseDaqiUrl}?page=1`
+      ? `${baseDaqiUrl}?start-date=${startDate}&end-date=${endDate}`
+      : `${baseDaqiUrl}`
 
   logger.info(
     `Fetching DAQI alerts from Ricardo API ${JSON.stringify({ url: daqiUrl })}`
@@ -332,12 +289,10 @@ async function fetchDaqiAlertsFromRicardo(options = {}) {
 }
 
 export async function fetchDaqiAlerts(options = {}) {
-  return fetchWithMockFallback(
-    fetchDaqiAlertsFromRicardo,
-    options,
-    buildMockDaqiResponse,
-    'DAQI alerts'
-  )
+  if (config.get('ricardoApi.useMock')) {
+    return fetchDaqiFromWireMock()
+  }
+  return fetchDaqiAlertsFromRicardo(options)
 }
 
 export async function fetchSiteMetaData() {

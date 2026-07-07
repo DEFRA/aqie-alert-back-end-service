@@ -79,12 +79,18 @@ async function createIndexes(db) {
     .collection('forecast-schedule-state')
     .createIndex({ forecastDate: 1 }, { unique: true })
 
-  // DAQI alert dedup key: a single alert is identified by the combination of
-  // samplingPointId + siteId + date (compound unique). The schedule re-runs
-  // every 15 minutes; this index ensures the same breach is not re-processed.
+  // DAQI alert dedup key: `samplingPointId` alone is unique per physical
+  // breach. Ricardo guarantees that a samplingPointId identifies exactly one
+  // (pollutant, location) pair, so siteId and pollutant are functionally
+  // implied by samplingPointId. Different readings of the same breach share
+  // the samplingPointId and dedup via the 24h lastUpdatedFromRicardo window
+  // in daqiAlertProcessor.js.
   await db
     .collection('daqi-alert-processing-state')
-    .createIndex({ samplingPointId: 1, siteId: 1, date: 1 }, { unique: true })
+    .createIndex(
+      { samplingPointId: 1 },
+      { unique: true, name: 'samplingPointId_unique' }
+    )
 
   await db.collection('daqi-alerts-audit').createIndex({ 'alert-id': 1 })
 
