@@ -400,8 +400,15 @@ export async function processDaqiAlerts(db) {
   // Collapse rows in this response that share the same samplingPointId but
   // differ in date — Ricardo can emit several refresh-readings of the same
   // breach in one response.
+  // Sort descending by date first so collapseInCycleDuplicates keeps the
+  // LATEST reading per samplingPointId rather than the first-seen one.
+  // This ensures lastUpdatedFromRicardo (and daqi) reflect the most recent
+  // Ricardo emission when an update-only bump is written to the state collection.
+  const sortedByDateDesc = [...validAlerts].sort(
+    (a, b) => new Date(b.date) - new Date(a.date)
+  )
   const uniqueCandidates = collapseInCycleDuplicates(
-    validAlerts,
+    sortedByDateDesc,
     (a) => a.samplingPointId
   )
   logger.info(

@@ -517,20 +517,98 @@ describe('daqiAlertProcessor', () => {
     it('collapses rows with same combo but different dates into one notification', async () => {
       const db = makeDb()
       const t2 = new Date(Date.now() - 50 * 60 * 1000).toISOString()
-      const t3 = new Date(Date.now() - 40 * 60 * 1000).toISOString()
+      const t3 = new Date(Date.now() - 40 * 60 * 1000).toISOString() // latest
       fetchDaqiAlerts.mockResolvedValueOnce({
         member: [
-          sampleAlert,
-          { ...sampleAlert, date: t2, daqi: 9 },
-          { ...sampleAlert, date: t3, daqi: 8 }
+          sampleAlert, // t1: oldest (~60 min ago), daqi 8
+          { ...sampleAlert, date: t2, daqi: 9 }, // t2: middle (~50 min ago)
+          { ...sampleAlert, date: t3, daqi: 8 } // t3: latest (~40 min ago) — should win
         ]
       })
       sendNotification.mockResolvedValue({ notificationId: 'notif-x' })
 
       await processDaqiAlerts(db)
 
-      // Three rows, same (samplingPointId, siteId, pollutant) — should collapse to one notification
+      // Three rows, same samplingPointId — collapses to one notification
       expect(sendNotification).toHaveBeenCalledTimes(1)
+
+      // After sort-desc-then-collapse, t3 (latest date) wins.
+      // markAlertInProgress must use t3's date, not the first-seen t1 / SAMPLE_ALERT_DATE.
+      expect(db._state.updateOne).toHaveBeenCalledWith(
+        {
+          samplingPointId: 77162,
+          'alert-started-timestamp': t3
+        },
+        expect.objectContaining({
+          $set: expect.objectContaining({
+            lastUpdatedFromRicardo: t3,
+            daqi: 8,
+            'alert-started-timestamp': t3
+          })
+        }),
+        { upsert: true }
+      )
+    })
+
+    it('update-only: bumps lastUpdatedFromRicardo to the latest in-cycle reading when multiple readings exist for the same samplingPointId', async () => {
+      // Reproduces the exact production bug:
+      // Ricardo emits two readings for samplingPointId 60324 in one cycle response.
+      // The state row is already processed and within 24h → verdict = 'update-only'.
+      // Before the fix, collapseInCycleDuplicates kept the FIRST-SEEN reading (older date),
+      // so updateStateForExistingAlert wrote the older date as lastUpdatedFromRicardo.
+      // After the fix, the array is sorted desc by date before collapsing, so the
+      // LATEST reading wins and the correct date/daqi are persisted.
+      const db = makeDb()
+      const olderReadingDate = new Date(
+        Date.now() - 80 * 60 * 1000
+      ).toISOString() // 80 min ago, daqi 9
+      const latestReadingDate = new Date(
+        Date.now() - 40 * 60 * 1000
+      ).toISOString() // 40 min ago, daqi 10 — should win
+      const existingStartedAt = new Date(
+        Date.now() - 5 * 60 * 60 * 1000
+      ).toISOString() // 5h ago — the original event start, within 24h window
+
+      db._state.find.mockReturnValueOnce({
+        sort: vi.fn(function () {
+          return this
+        }),
+        toArray: vi.fn().mockResolvedValue([
+          {
+            samplingPointId: 77162,
+            siteId: 'UKA00819',
+            'process-status': 'processed',
+            'alert-started-timestamp': existingStartedAt,
+            lastUpdatedFromRicardo: existingStartedAt
+          }
+        ])
+      })
+      fetchDaqiAlerts.mockResolvedValueOnce({
+        member: [
+          { ...sampleAlert, date: olderReadingDate, daqi: 9 }, // older reading
+          { ...sampleAlert, date: latestReadingDate, daqi: 10 } // latest reading
+        ]
+      })
+
+      await processDaqiAlerts(db)
+
+      // Still within the 24h dedup window → no re-notification
+      expect(sendNotification).not.toHaveBeenCalled()
+
+      // lastUpdatedFromRicardo must reflect the LATEST reading (latestReadingDate / daqi 10),
+      // not the first-seen one (olderReadingDate / daqi 9).
+      expect(db._state.updateOne).toHaveBeenCalledWith(
+        {
+          samplingPointId: 77162,
+          'alert-started-timestamp': existingStartedAt
+        },
+        {
+          $set: {
+            lastUpdatedFromRicardo: latestReadingDate,
+            daqi: 10
+          }
+        }
+      )
     })
 
     it('drops alerts that do not meet threshold or validation status', async () => {
