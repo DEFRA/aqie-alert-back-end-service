@@ -3,7 +3,11 @@ import { sendNotification } from './notifyServiceClient.js'
 import { getRegionForSite } from './ricardoSiteAndRegionCache.js'
 import { formatLocationForUrl } from './locationUtils.js'
 import { cleanPollutantName } from './pollutantAlertProcessor.js'
-import { getRollingDayWindow, TWENTY_FOUR_HOURS_MS } from './dateRangeUtils.js'
+import {
+  getRollingDayWindow,
+  isWithinLast24Hours,
+  TWENTY_FOUR_HOURS_MS
+} from './dateRangeUtils.js'
 import {
   collapseInCycleDuplicates,
   ensureCacheReadyForCycle,
@@ -78,7 +82,8 @@ function filterValidDaqiAlerts(members, threshold) {
         item.validationStatus === 2 &&
         item.samplingPointId !== undefined &&
         item.siteId &&
-        item.date
+        item.date &&
+        isWithinLast24Hours(item.date)
     )
     .map((item) => ({
       'alert-id': buildAlertKey(item),
@@ -340,10 +345,10 @@ async function fetchDaqiAlertsForCycle() {
  * Classifies one alert against its (optional) existing state row.
  *
  * Business rule: the 24h dedup window is anchored to `lastUpdatedFromRicardo`
- * (the timestamp of Ricardo's most-recent reading for this combo). As long as
- * Ricardo keeps confirming the breach at least every 24h, we treat it as one
- * continuous event and don't re-notify. If Ricardo goes quiet for >24h and
- * the breach then reappears, that's a fresh event → notify again.
+ * (server time of when WE last processed this combo). As long as we keep
+ * seeing this samplingPointId in Ricardo's response at least every 24h, we
+ * treat it as one continuous event and don't re-notify. If Ricardo goes quiet
+ * for >24h and the breach then reappears, that's a fresh event → notify again.
  *
  *   'skip-stuck'  — a prior cycle marked the combo in-progress and never
  *                   finished (mongo-lock guarantees serial cycles, so seeing

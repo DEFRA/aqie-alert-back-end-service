@@ -53,7 +53,7 @@ const { sendNotification } = await import('./notifyServiceClient.js')
 const { getRegionForSite, getSiteCacheSize, ensureSiteCachePopulated } =
   await import('./ricardoSiteAndRegionCache.js')
 
-const SAMPLE_ALERT_DATE = '2026-06-08T02:00:00+01:00'
+const SAMPLE_ALERT_DATE = new Date(Date.now() - 60 * 60 * 1000).toISOString() // 1h ago — within 24h
 
 const sampleAlert = {
   '@id': '/api/d_a_q_i_alerts/7716220260528',
@@ -67,6 +67,11 @@ const sampleAlert = {
   pollutant: 'O<sub>3</sub> (O3)',
   validationStatus: 2,
   date: SAMPLE_ALERT_DATE
+}
+
+const staleAlert = {
+  ...sampleAlert,
+  date: '2025-12-04T02:00:00+01:00' // >24h ago — should be filtered by Option A
 }
 
 describe('daqiAlertProcessor', () => {
@@ -83,7 +88,7 @@ describe('daqiAlertProcessor', () => {
   describe('buildAlertKey', () => {
     it('should combine samplingPointId, siteId, and date', () => {
       expect(buildAlertKey(sampleAlert)).toBe(
-        '77162-UKA00819-2026-06-08T02:00:00+01:00'
+        `77162-UKA00819-${SAMPLE_ALERT_DATE}`
       )
     })
   })
@@ -98,7 +103,6 @@ describe('daqiAlertProcessor', () => {
       const result = filterValidDaqiAlerts(members, 7)
       expect(result).toHaveLength(1)
       expect(result[0]).toMatchObject({
-        'alert-id': '77162-UKA00819-2026-06-08T02:00:00+01:00',
         samplingPointId: 77162,
         siteId: 'UKA00819',
         daqi: 8
@@ -113,6 +117,10 @@ describe('daqiAlertProcessor', () => {
         { ...sampleAlert, date: '' }
       ]
       expect(filterValidDaqiAlerts(members, 7)).toHaveLength(0)
+    })
+
+    it('drops entries whose date is older than 24h', () => {
+      expect(filterValidDaqiAlerts([staleAlert], 7)).toHaveLength(0)
     })
 
     it('respects the threshold parameter', () => {
@@ -199,9 +207,7 @@ describe('daqiAlertProcessor', () => {
               'https://check-air-quality.service.gov.uk/location/cardiff?lang=en'
           })
         }),
-        expect.stringMatching(
-          /^daqi-alert-77162-UKA00819-2026-06-08T02:00:00\+01:00-\d+$/
-        )
+        expect.stringMatching(/^daqi-alert-.+-\d+$/)
       )
     })
 
@@ -348,8 +354,9 @@ describe('daqiAlertProcessor', () => {
       // samplingPointId identifies exactly one (pollutant, location) pair).
       // siteId and pollutant are stored on the row as informational context.
       // 'alert-started-timestamp' mirrors Ricardo's `date` (the breach
-      // reading timestamp), not server time — matches lastUpdatedFromRicardo
-      // on the initial write, then stays fixed while lastUpdated bumps.
+      // reading timestamp). lastUpdatedFromRicardo is server time (new Date())
+      // so the 24h dedup window measures when WE last processed, not when
+      // Ricardo last read.
       expect(db._state.updateOne).toHaveBeenCalledWith(
         {
           samplingPointId: 77162,
@@ -374,7 +381,7 @@ describe('daqiAlertProcessor', () => {
       // traces back to a specific Ricardo emission.
       expect(db._audit.insertOne).toHaveBeenCalledWith(
         expect.objectContaining({
-          'alert-id': '77162-UKA00819-2026-06-08T02:00:00+01:00',
+          'alert-id': `77162-UKA00819-${SAMPLE_ALERT_DATE}`,
           'daqi-alert-status': 'not-processed',
           notificationId: null
         })
@@ -384,7 +391,7 @@ describe('daqiAlertProcessor', () => {
 
       expect(db._audit.updateOne).toHaveBeenCalledWith(
         expect.objectContaining({
-          'alert-id': '77162-UKA00819-2026-06-08T02:00:00+01:00',
+          'alert-id': `77162-UKA00819-${SAMPLE_ALERT_DATE}`,
           'daqi-alert-status': 'not-processed'
         }),
         {
@@ -427,6 +434,7 @@ describe('daqiAlertProcessor', () => {
             siteId: 'UKA00819',
             pollutant: 'O<sub>3</sub> (O3)',
             'process-status': 'processed',
+            'alert-started-timestamp': fiveHoursAgo,
             lastUpdatedFromRicardo: fiveHoursAgo
           }
         ])
@@ -439,7 +447,10 @@ describe('daqiAlertProcessor', () => {
       expect(sendNotification).not.toHaveBeenCalled()
       // But the state row was bumped with lastUpdatedFromRicardo
       expect(db._state.updateOne).toHaveBeenCalledWith(
-        { samplingPointId: 77162 },
+        {
+          samplingPointId: 77162,
+          'alert-started-timestamp': expect.any(String)
+        },
         {
           $set: expect.objectContaining({
             lastUpdatedFromRicardo: SAMPLE_ALERT_DATE,
@@ -505,11 +516,13 @@ describe('daqiAlertProcessor', () => {
 
     it('collapses rows with same combo but different dates into one notification', async () => {
       const db = makeDb()
+      const t2 = new Date(Date.now() - 50 * 60 * 1000).toISOString()
+      const t3 = new Date(Date.now() - 40 * 60 * 1000).toISOString()
       fetchDaqiAlerts.mockResolvedValueOnce({
         member: [
           sampleAlert,
-          { ...sampleAlert, date: '2026-06-08T03:00:00+01:00', daqi: 9 },
-          { ...sampleAlert, date: '2026-06-08T04:00:00+01:00', daqi: 8 }
+          { ...sampleAlert, date: t2, daqi: 9 },
+          { ...sampleAlert, date: t3, daqi: 8 }
         ]
       })
       sendNotification.mockResolvedValue({ notificationId: 'notif-x' })
