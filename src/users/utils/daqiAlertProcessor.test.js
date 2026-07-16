@@ -520,9 +520,9 @@ describe('daqiAlertProcessor', () => {
       const t3 = new Date(Date.now() - 40 * 60 * 1000).toISOString() // latest
       fetchDaqiAlerts.mockResolvedValueOnce({
         member: [
-          sampleAlert, // t1: oldest (~60 min ago), daqi 8
+          sampleAlert, // t1: oldest (~60 min ago), daqi 8 — should win (oldest timestamp)
           { ...sampleAlert, date: t2, daqi: 9 }, // t2: middle (~50 min ago)
-          { ...sampleAlert, date: t3, daqi: 8 } // t3: latest (~40 min ago) — should win
+          { ...sampleAlert, date: t3, daqi: 8 } // t3: latest (~40 min ago)
         ]
       })
       sendNotification.mockResolvedValue({ notificationId: 'notif-x' })
@@ -532,39 +532,37 @@ describe('daqiAlertProcessor', () => {
       // Three rows, same samplingPointId — collapses to one notification
       expect(sendNotification).toHaveBeenCalledTimes(1)
 
-      // After sort-desc-then-collapse, t3 (latest date) wins.
-      // markAlertInProgress must use t3's date, not the first-seen t1 / SAMPLE_ALERT_DATE.
+      // Cron-job rule: oldest timestamp wins (breach-started time).
+      // t1 (SAMPLE_ALERT_DATE, ~60 min ago) is the oldest → wins.
       expect(db._state.updateOne).toHaveBeenCalledWith(
         {
           samplingPointId: 77162,
-          'alert-started-timestamp': t3
+          'alert-started-timestamp': SAMPLE_ALERT_DATE
         },
         expect.objectContaining({
           $set: expect.objectContaining({
-            lastUpdatedFromRicardo: t3,
+            lastUpdatedFromRicardo: SAMPLE_ALERT_DATE,
             daqi: 8,
-            'alert-started-timestamp': t3
+            'alert-started-timestamp': SAMPLE_ALERT_DATE
           })
         }),
         { upsert: true }
       )
     })
 
-    it('update-only: bumps lastUpdatedFromRicardo to the latest in-cycle reading when multiple readings exist for the same samplingPointId', async () => {
-      // Reproduces the exact production bug:
-      // Ricardo emits two readings for samplingPointId 60324 in one cycle response.
+    it('update-only: bumps lastUpdatedFromRicardo to the oldest in-cycle reading when multiple readings exist for the same samplingPointId', async () => {
+      // Cron-job rule: oldest timestamp wins (breach-started time).
+      // Ricardo emits two readings for samplingPointId 77162 in one cycle response.
       // The state row is already processed and within 24h → verdict = 'update-only'.
-      // Before the fix, collapseInCycleDuplicates kept the FIRST-SEEN reading (older date),
-      // so updateStateForExistingAlert wrote the older date as lastUpdatedFromRicardo.
-      // After the fix, the array is sorted desc by date before collapsing, so the
-      // LATEST reading wins and the correct date/daqi are persisted.
+      // deduplicateAlertsOldestFirst keeps the OLDEST reading per samplingPointId,
+      // so updateStateForExistingAlert writes the older date as lastUpdatedFromRicardo.
       const db = makeDb()
       const olderReadingDate = new Date(
         Date.now() - 80 * 60 * 1000
-      ).toISOString() // 80 min ago, daqi 9
+      ).toISOString() // 80 min ago, daqi 9 — should win (oldest)
       const latestReadingDate = new Date(
         Date.now() - 40 * 60 * 1000
-      ).toISOString() // 40 min ago, daqi 10 — should win
+      ).toISOString() // 40 min ago, daqi 10
       const existingStartedAt = new Date(
         Date.now() - 5 * 60 * 60 * 1000
       ).toISOString() // 5h ago — the original event start, within 24h window
@@ -585,7 +583,7 @@ describe('daqiAlertProcessor', () => {
       })
       fetchDaqiAlerts.mockResolvedValueOnce({
         member: [
-          { ...sampleAlert, date: olderReadingDate, daqi: 9 }, // older reading
+          { ...sampleAlert, date: olderReadingDate, daqi: 9 }, // older reading — wins
           { ...sampleAlert, date: latestReadingDate, daqi: 10 } // latest reading
         ]
       })
@@ -595,8 +593,8 @@ describe('daqiAlertProcessor', () => {
       // Still within the 24h dedup window → no re-notification
       expect(sendNotification).not.toHaveBeenCalled()
 
-      // lastUpdatedFromRicardo must reflect the LATEST reading (latestReadingDate / daqi 10),
-      // not the first-seen one (olderReadingDate / daqi 9).
+      // lastUpdatedFromRicardo must reflect the OLDEST reading (olderReadingDate / daqi 9)
+      // because the cron-job rule is: oldest timestamp wins (breach-started time).
       expect(db._state.updateOne).toHaveBeenCalledWith(
         {
           samplingPointId: 77162,
@@ -604,8 +602,8 @@ describe('daqiAlertProcessor', () => {
         },
         {
           $set: {
-            lastUpdatedFromRicardo: latestReadingDate,
-            daqi: 10
+            lastUpdatedFromRicardo: olderReadingDate,
+            daqi: 9
           }
         }
       )

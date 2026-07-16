@@ -9,11 +9,11 @@ import {
   TWENTY_FOUR_HOURS_MS
 } from './dateRangeUtils.js'
 import {
-  collapseInCycleDuplicates,
   ensureCacheReadyForCycle,
   getMatchingUsers,
   sendNotificationsToUsers
 } from './alertCycleUtils.js'
+import { deduplicateAlertsOldestFirst } from './alertDedupUtils.js'
 import { config } from '../../config.js'
 import { createLogger } from '../../common/helpers/logging/logger.js'
 import { DB_ERROR_CODE, DAQI_VERY_HIGH_THRESHOLD } from './constants.js'
@@ -397,20 +397,11 @@ export async function processDaqiAlerts(db) {
     return
   }
 
-  // Collapse rows in this response that share the same samplingPointId but
-  // differ in date — Ricardo can emit several refresh-readings of the same
-  // breach in one response.
-  // Sort descending by date first so collapseInCycleDuplicates keeps the
-  // LATEST reading per samplingPointId rather than the first-seen one.
-  // This ensures lastUpdatedFromRicardo (and daqi) reflect the most recent
-  // Ricardo emission when an update-only bump is written to the state collection.
-  const sortedByDateDesc = [...validAlerts].sort(
-    (a, b) => new Date(b.date) - new Date(a.date)
-  )
-  const uniqueCandidates = collapseInCycleDuplicates(
-    sortedByDateDesc,
-    (a) => a.samplingPointId
-  )
+  // Collapse rows in this response that share the same samplingPointId.
+  // Cron-job rule: oldest timestamp wins (breach-started time), highest daqi
+  // as tie-breaker when timestamps are equal. This ensures the notification
+  // reflects when the breach first occurred, not Ricardo's latest refresh.
+  const uniqueCandidates = deduplicateAlertsOldestFirst(validAlerts, 'daqi')
   logger.info(
     `[DAQI] ${uniqueCandidates.length} unique candidate alerts (${validAlerts.length - uniqueCandidates.length} in-cycle duplicates collapsed by samplingPointId)`
   )

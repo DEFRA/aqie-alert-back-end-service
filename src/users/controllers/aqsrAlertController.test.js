@@ -285,9 +285,14 @@ describe('aqsrAlertController', () => {
       mockFindRegion.mockReturnValue(REGION)
       mockFetchAlerts.mockResolvedValue({
         member: [
-          makeAlert({ siteId: SITE_ID_1, date: recentDate }),
+          makeAlert({
+            siteId: SITE_ID_1,
+            samplingPointId: 1001,
+            date: recentDate
+          }),
           makeAlert({
             siteId: SITE_ID_2,
+            samplingPointId: 1002,
             pollutant: 'NO2',
             date: recentDate
           })
@@ -399,9 +404,21 @@ describe('aqsrAlertController', () => {
       mockFindRegion.mockReturnValue(REGION) // Ricardo returns out-of-order to prove our sort kicks in
       mockFetchAlerts.mockResolvedValue({
         member: [
-          makeAlert({ siteId: SITE_ID_1, date: fiveHoursAgo }),
-          makeAlert({ siteId: SITE_ID_1, date: oneHourAgo }),
-          makeAlert({ siteId: SITE_ID_1, date: twentyHoursAgo })
+          makeAlert({
+            siteId: SITE_ID_1,
+            samplingPointId: 2001,
+            date: fiveHoursAgo
+          }),
+          makeAlert({
+            siteId: SITE_ID_1,
+            samplingPointId: 2002,
+            date: oneHourAgo
+          }),
+          makeAlert({
+            siteId: SITE_ID_1,
+            samplingPointId: 2003,
+            date: twentyHoursAgo
+          })
         ]
       })
 
