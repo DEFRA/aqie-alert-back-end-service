@@ -13,6 +13,7 @@ import {
 } from '../utils/dateRangeUtils.js'
 import { createLogger } from '../../common/helpers/logging/logger.js'
 import { STATUS_OK } from '../utils/constants.js'
+import { deduplicateAlerts } from '../utils/alertDedupUtils.js'
 
 const logger = createLogger()
 const LOG_PREFIX = '[AQSRAlert]'
@@ -41,6 +42,11 @@ function sortByDateDesc(alerts) {
     (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
   )
 }
+
+// Dedup rules per samplingPointId (unique per siteId+pollutant):
+//   - same timestamp → keep highest concentration
+//   - different timestamp → keep latest timestamp
+// Delegated to shared alertDedupUtils.
 
 async function fetchRicardoAlerts(requestId, options = {}) {
   try {
@@ -116,8 +122,13 @@ async function handleCurrentDayMode(request, h) {
     })}`
   )
 
+  const dedupedAlerts = deduplicateAlerts(activeAlerts, 'concentration')
+  logger.info(
+    `${LOG_PREFIX} ${dedupedAlerts.length} AQSR alert(s) after dedup (${activeAlerts.length - dedupedAlerts.length} collapsed) ${JSON.stringify({ requestId })}`
+  )
+
   return h
-    .response(sortByDateDesc(activeAlerts).map(buildAlertEntry))
+    .response(sortByDateDesc(dedupedAlerts).map(buildAlertEntry))
     .code(STATUS_OK)
 }
 

@@ -11,6 +11,7 @@ import {
 import { config } from '../../config.js'
 import { createLogger } from '../../common/helpers/logging/logger.js'
 import { STATUS_OK } from '../utils/constants.js'
+import { deduplicateAlerts } from '../utils/alertDedupUtils.js'
 
 const logger = createLogger()
 const LOG_PREFIX = '[DAQIAlert]'
@@ -38,26 +39,7 @@ function sortByDateDesc(alerts) {
 // Dedup rules per samplingPointId (unique per siteId+pollutant):
 //   - same timestamp → keep highest daqi
 //   - different timestamp → keep latest timestamp
-function deduplicateAlerts(alerts) {
-  const best = new Map()
-  for (const alert of alerts) {
-    const key = alert.samplingPointId
-    const existing = best.get(key)
-    if (!existing) {
-      best.set(key, alert)
-      continue
-    }
-    const incomingTime = new Date(alert.date).getTime()
-    const existingTime = new Date(existing.date).getTime()
-    if (
-      incomingTime > existingTime ||
-      (incomingTime === existingTime && alert.daqi > existing.daqi)
-    ) {
-      best.set(key, alert)
-    }
-  }
-  return [...best.values()]
-}
+// Delegated to shared alertDedupUtils.
 
 export async function daqiAlertHandler(request, h) {
   const requestId = request.headers['x-request-id'] || `req-${randomUUID()}`
@@ -120,7 +102,7 @@ export async function daqiAlertHandler(request, h) {
     `${LOG_PREFIX} ${matchingAlerts.length} DAQI alert(s) passed filter (daqi>=${daqiThreshold}, validationStatus=2, region="${region}", within 24h) ${JSON.stringify({ requestId })}`
   )
 
-  const dedupedAlerts = deduplicateAlerts(matchingAlerts)
+  const dedupedAlerts = deduplicateAlerts(matchingAlerts, 'daqi')
   logger.info(
     `${LOG_PREFIX} ${dedupedAlerts.length} DAQI alert(s) after dedup (${matchingAlerts.length - dedupedAlerts.length} collapsed) ${JSON.stringify({ requestId })}`
   )
