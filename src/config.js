@@ -211,6 +211,12 @@ const config = convict({
       default: 'https://ricardomockalerts.wiremockapi.cloud/api/daqi_alerts',
       env: 'RICARDO_API_DAQI_MOCK_URL'
     },
+    aqsrMockUrl: {
+      doc: 'WireMock stub URL for AQSR alerts (used when RICARDO_API_USE_MOCK=true)',
+      format: String,
+      default: 'https://aqsrricardomock.wiremockapi.cloud/api/aqsr_alerts',
+      env: 'RICARDO_API_AQSR_MOCK_URL'
+    },
     siteMetaDataUrl: {
       doc: 'Ricardo API site metadata endpoint (used to map siteId → region)',
       format: String,
