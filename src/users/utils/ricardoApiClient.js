@@ -23,63 +23,10 @@ const UK_DATE_FORMATTER = new Intl.DateTimeFormat('en-CA', {
 })
 
 // ---------------------------------------------------------------------------
-// Mock alert data — used when RICARDO_API_USE_MOCK=true.
-// Only fetchAlerts is mocked. getAccessToken and fetchSiteMetaData always call
-// the real Ricardo API so the site-region cache is populated with live data.
-// Note: query params (start-date / end-date) are ignored — all alerts are
-// returned every call. For date-filter behaviour, run against the real API.
+// WireMock AQSR stub — used when RICARDO_API_USE_MOCK=true.
+// Calls the WireMock Cloud stub instead of the real Ricardo AQSR API.
 // ---------------------------------------------------------------------------
-
-const MOCK_ALERTS_RESPONSE = {
-  '@context': '/api/contexts/AQSRAlert',
-  '@id': '/api/aqsr_alerts',
-  '@type': 'Collection',
-  totalItems: 1,
-  member: [
-    {
-      '@id': '/api/a_q_s_r_alerts/1187',
-      '@type': 'AQSRAlert',
-      id: 1187,
-      samplingPointId: 9809,
-      siteId: 'UKA00128',
-      region: 'West Midlands',
-      pollutant: 'O<sub>3</sub> (O3)',
-      informationThreshold:
-        'EU ozone public information threshold of 180&micro;g/m<sup>3</sup>',
-      informationLevel: false,
-      alertThreshold: 'Ozone Alert 240&micro;g/m<sup>3</sup>',
-      alertLevel: true,
-      concentration: 190,
-      duration: null,
-      alertText:
-        '<?xml encoding="utf-8" ?><h3>Pollution Alert Warning Wed 13/08/2025 at 5pm</h3><ul><li> Ozone Public information threshold 180 &micro;g/m<sup>3</sup> breached at Salford Ec[...]',
-      coverage: 'N/A',
-      validationStatus: 2,
-      date: '2026-05-26T05:00:00+01:00'
-    },
-    {
-      '@id': '/api/a_q_s_r_alerts/1187',
-      '@type': 'AQSRAlert',
-      id: 1187,
-      samplingPointId: 9810,
-      siteId: 'UKA00260',
-      region: 'West Central Scotland',
-      pollutant: 'O<sub>3</sub> (O3)',
-      informationThreshold:
-        'EU ozone public information threshold of 180&micro;g/m<sup>3</sup>',
-      informationLevel: false,
-      alertThreshold: 'Ozone Alert 240&micro;g/m<sup>3</sup>',
-      alertLevel: true,
-      concentration: 190,
-      duration: null,
-      alertText:
-        '<?xml encoding="utf-8" ?><h3>Pollution Alert Warning Wed 13/08/2025 at 5pm</h3><ul><li> Ozone Public information threshold 180 &micro;g/m<sup>3</sup> breached at Salford Ec[...]',
-      coverage: 'N/A',
-      validationStatus: 2,
-      date: '2026-05-26T05:00:00+01:00'
-    }
-  ]
-}
+const WIREMOCK_AQSR_URL = config.get('ricardoApi.aqsrMockUrl')
 
 /**
  * Builds an undici dispatcher for Ricardo API calls.
@@ -155,37 +102,6 @@ async function authenticatedRicardoGet(url, operation) {
   return response.json()
 }
 
-/**
- * Wraps a Ricardo fetch with mock-fallback behaviour. When
- * ricardoApi.useMock=true, the real upstream is still called so live traffic
- * is generated (useful for perf testing and for verifying credentials remain
- * valid), then the mock response is returned to the caller so downstream
- * logic has deterministic data. When useMock=false, the real response is
- * returned directly.
- */
-async function fetchWithMockFallback(realFetch, options, mockBuilder, label) {
-  if (!config.get('ricardoApi.useMock')) {
-    return realFetch(options)
-  }
-
-  try {
-    const realData = await realFetch(options)
-    logger.info(
-      `[MOCK] Real Ricardo ${label} call succeeded with ${realData.totalItems} items; returning mock response instead`
-    )
-  } catch (err) {
-    logger.warn(
-      `[MOCK] Real Ricardo ${label} call failed during mock mode (continuing with mock) ${JSON.stringify({ error: err.message })}`
-    )
-  }
-
-  const mockResponse = mockBuilder()
-  logger.info(
-    `[MOCK] Returning mock Ricardo ${label} response (${mockResponse.totalItems} items)`
-  )
-  return mockResponse
-}
-
 export async function getAccessToken() {
   const loginUrl = config.get('ricardoApi.loginUrl')
   const email = config.get('ricardoApi.email')
@@ -222,6 +138,19 @@ export async function getAccessToken() {
   return token
 }
 
+async function fetchAqsrFromWireMock() {
+  logger.info(
+    `[MOCK] Fetching AQSR alerts from WireMock ${JSON.stringify({ url: WIREMOCK_AQSR_URL })}`
+  )
+  const response = await fetch(WIREMOCK_AQSR_URL, {
+    signal: AbortSignal.timeout(RICARDO_REQUEST_TIMEOUT_MS)
+  })
+  if (!response.ok) {
+    throw new Error(`WireMock AQSR stub returned ${response.status}`)
+  }
+  return response.json()
+}
+
 async function fetchAlertsFromRicardo(options = {}) {
   const baseAlertsUrl = config.get('ricardoApi.alertsUrl')
   // Default to a rolling 24-hour window (yesterday → today, UK local date)
@@ -244,12 +173,10 @@ async function fetchAlertsFromRicardo(options = {}) {
 }
 
 export async function fetchAlerts(options = {}) {
-  return fetchWithMockFallback(
-    fetchAlertsFromRicardo,
-    options,
-    () => MOCK_ALERTS_RESPONSE,
-    'alerts'
-  )
+  if (config.get('ricardoApi.useMock')) {
+    return fetchAqsrFromWireMock()
+  }
+  return fetchAlertsFromRicardo(options)
 }
 
 // ---------------------------------------------------------------------------

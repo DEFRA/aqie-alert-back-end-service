@@ -30,7 +30,8 @@ const CONFIG_VALUES = {
   'ricardoApi.alertsUrl': 'https://ricardo.test/alerts',
   'ricardoApi.daqiAlertsUrl': 'https://ricardo.test/daqi',
   'ricardoApi.siteMetaDataUrl': 'https://ricardo.test/sites',
-  'ricardoApi.daqiMockUrl': 'https://wiremock.test/daqi_alerts'
+  'ricardoApi.daqiMockUrl': 'https://wiremock.test/daqi_alerts',
+  'ricardoApi.aqsrMockUrl': 'https://wiremock.test/aqsr_alerts'
 }
 
 function makeResponse({ ok = true, status = 200, json = {}, text = '' } = {}) {
@@ -251,25 +252,44 @@ describe('ricardoApiClient', () => {
       })
     })
 
-    it('returns the mock response when useMock is true and the real call succeeds', async () => {
+    it('calls the WireMock AQSR stub URL when useMock is true and returns its response', async () => {
+      const wiremockResponse = {
+        totalItems: 1,
+        member: [{ id: 1187, siteId: 'UKA00128', alertLevel: true }]
+      }
       const { fetchAlerts, fetch } = await setup({ useMock: true })
+      fetch.mockResolvedValue(makeResponse({ json: wiremockResponse }))
 
       const data = await fetchAlerts()
 
-      expect(data.totalItems).toBe(1)
-      expect(data.member[0].id).toBe(1187)
-      // real upstream is still exercised (login + alerts) before the mock wins
-      expect(getCall(fetch)).toBeDefined()
+      expect(data).toEqual(wiremockResponse)
+      expect(fetch).toHaveBeenCalledWith(
+        'https://wiremock.test/aqsr_alerts',
+        expect.objectContaining({ signal: expect.any(Object) })
+      )
     })
 
-    it('returns the mock response when useMock is true and the real call fails', async () => {
+    it('does NOT call the real Ricardo alerts endpoint when useMock is true', async () => {
       const { fetchAlerts, fetch } = await setup({ useMock: true })
-      fetch.mockRejectedValue(new Error('network down'))
+      fetch.mockResolvedValue(
+        makeResponse({ json: { totalItems: 0, member: [] } })
+      )
 
-      const data = await fetchAlerts()
+      await fetchAlerts()
 
-      expect(data.totalItems).toBe(1)
-      expect(data.member[0].id).toBe(1187)
+      const realApiCall = fetch.mock.calls.find(([url]) =>
+        url.includes('ricardo.test/alerts')
+      )
+      expect(realApiCall).toBeUndefined()
+    })
+
+    it('throws when useMock is true and the WireMock AQSR stub returns a non-ok response', async () => {
+      const { fetchAlerts, fetch } = await setup({ useMock: true })
+      fetch.mockResolvedValue(makeResponse({ ok: false, status: 503 }))
+
+      await expect(fetchAlerts()).rejects.toThrow(
+        'WireMock AQSR stub returned 503'
+      )
     })
   })
 
