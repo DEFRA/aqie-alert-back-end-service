@@ -17,6 +17,7 @@ import {
   initSiteCache,
   stopSiteCache
 } from './users/utils/ricardoSiteAndRegionCache.js'
+import { addLastUpdatedFromRicardoToState } from './migrations/addLastUpdatedFromRicardoToState.js'
 
 async function createServer() {
   setupProxy()
@@ -70,6 +71,7 @@ async function createServer() {
 
   server.ext('onPreStart', async () => {
     await initSiteCache()
+    await addLastUpdatedFromRicardoToState(server.db)
   })
 
   server.ext('onPreStop', () => {
