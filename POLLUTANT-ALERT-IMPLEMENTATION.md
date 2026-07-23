@@ -95,17 +95,18 @@ For network failures (timeout, DNS, connection refused) `err.status` is `undefin
 
 Core business logic. Exported functions:
 
-| Function                                  | Description                                                                                                                                        |
-| ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `processPollutantAlerts(db)`              | **Main entry point** — orchestrates the full cycle                                                                                                 |
-| `filterValidAlerts(members)`              | Filters raw API members to `validationStatus==2` AND (`alertLevel=true` OR `informationLevel=true`); maps to alert-detail shape including `siteId` |
-| `getMatchingUsers(users, region)`         | Returns one entry per matching user-location pair for a given region                                                                               |
-| `cleanPollutantName(pollutant)`           | Strips HTML tags from pollutant strings e.g. `O<sub>3</sub>` → `O3` — used for audit entries                                                       |
-| `formatPollutantName(pollutant)`          | Strips HTML tags then maps chemical code to human-readable name e.g. `O<sub>3</sub> (O3)` → `ozone (O3)` — used in notification payloads           |
-| `getAlreadyProcessedAlertIds(db)`         | Returns `Set<samplingPointId>` of alerts with status `in-progress` or `processed`                                                                  |
-| `markAlertInProgress(db, alertDetail)`    | Upserts alert into `pollutant-alert-processing-state` with `status: "in-progress"`                                                                 |
-| `markAlertProcessed(db, alertId)`         | Updates `pollutant-alert-processing-state` record to `status: "processed"`                                                                         |
-| `sendAlertToUser(userMatch, alertDetail)` | Builds and dispatches the notification payload; returns `notificationId`                                                                           |
+| Function                                                    | Description                                                                                                                                                                                                                                     |
+| ----------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `processPollutantAlerts(db)`                                | **Main entry point** — orchestrates the full cycle                                                                                                                                                                                              |
+| `filterValidAlerts(members)`                                | Filters members to `validationStatus==2` AND (`alertLevel=true` OR `informationLevel=true`) AND `isWithinLast24Hours(date)`; maps to alert-detail with `samplingPointId`, composite `alert-id` (`${samplingPointId}-${date}`), `siteId`, `date` |
+| `getMatchingUsers(users, region)`                           | Returns one entry per matching user-location pair for a given region                                                                                                                                                                            |
+| `cleanPollutantName(pollutant)`                             | Strips HTML tags from pollutant strings e.g. `O<sub>3</sub>` → `O3` — used for audit entries                                                                                                                                                    |
+| `formatPollutantName(pollutant)`                            | Strips HTML tags then maps chemical code to human-readable name e.g. `O<sub>3</sub> (O3)` → `ozone (O3)` — used in notification payloads                                                                                                        |
+| `classifyAlert(existingRow, now)`                           | Returns `'new'` / `'update-only'` / `'skip-stuck'` — the 24h sliding-window verdict anchored on `lastUpdatedFromRicardo`                                                                                                                        |
+| `markAlertInProgress(db, alertDetail)`                      | Upserts a NEW event row into `pollutant-alert-processing-state` (compound key `{alert-id, alert-started-timestamp}`) with `status: "in-progress"`                                                                                               |
+| `markAlertProcessed(db, alertDetail)`                       | Flips the same event row to `status: "processed"`                                                                                                                                                                                               |
+| `updateStateForExistingAlert(db, alertDetail, existingRow)` | Bumps `lastUpdatedFromRicardo`/`concentration` on an in-window event row without re-notifying                                                                                                                                                   |
+| `sendAlertToUser(userMatch, alertDetail)`                   | Builds and dispatches the notification payload; returns `notificationId`                                                                                                                                                                        |
 
 **Pollutant name mapping**
 
@@ -130,20 +131,22 @@ If the code is unrecognised the cleaned string (HTML stripped) is returned as-is
 
 ```
 1. fetchAlerts()                     — get fresh token, fetch Ricardo API (defaults to yesterday→today UK-local window)
-2. filterValidAlerts()               — keep only validationStatus==2 && (alertLevel=true || informationLevel=true)
-3. getAlreadyProcessedAlertIds()     — load IDs from pollutant-alert-processing-state collection
-4. Exclude already-seen IDs          — deduplicate across cron cycles
-5. Collapse duplicates within this cycle — Ricardo returns one row per hourly breach so the same samplingPointId can appear multiple times in one response; first-occurrence wins (Ricardo orders newest-first, so the latest measurement drives the notification)
-6. For each new unique alert:
-   a. getRegionForSite(siteId)       — O(1) in-memory cache lookup. If the siteId is not in the cache, the alert is **skipped** (logged as a warning, left unprocessed for a later cycle to retry); we never fall back to Ricardo's own `region` field — see "Region Resolution — Source of Truth" below
-   b. markAlertInProgress()          — upsert into pollutant-alert-processing-state (uses resolved region)
-   c. Query USERS where locations.region == resolvedRegion
-   d. getMatchingUsers()             — expand to one entry per matching location
-   e. For each user-location pair:
-      - insertPollutantAuditEntry()  — write audit record (not-processed); duplicate-key (11000) is logged and skipped
-      - sendAlertToUser()            — build payload, call notifyServiceClient
-      - updatePollutantAuditEntry()  — mark audit record processed + notificationId
-   f. If ALL notifications succeeded → markAlertProcessed()
+2. filterValidAlerts()               — keep validationStatus==2 && (alertLevel||informationLevel) && isWithinLast24Hours(date)
+3. deduplicateAlertsOldestFirst(_, 'concentration') — collapse rows sharing a samplingPointId; oldest date wins (breach-started time), highest concentration breaks ties
+4. loadRecentStateRowsByAlertId()    — bulk-load the latest state row per samplingPointId (alert-id), sorted by alert-started-timestamp desc
+5. For each unique candidate: classifyAlert(existingRow, now):
+   - 'skip-stuck'  → prior cycle left it in-progress (crashed) → skip
+   - 'update-only' → last Ricardo reading within 24h → updateStateForExistingAlert() (bump lastUpdatedFromRicardo, no notify)
+   - 'new'         → no row, or quiet >24h → processAlertForUsers():
+       a. getRegionForSite(siteId)       — O(1) cache lookup; siteId miss → skip (retry next cycle); never trust Ricardo's region
+       b. markAlertInProgress()          — upsert NEW event row (compound key alert-id + alert-started-timestamp)
+       c. Query USERS where locations.region == resolvedRegion
+       d. getMatchingUsers()             — expand to one entry per matching location
+       e. For each user-location pair:
+          - insertPollutantAuditEntry()  — audit record (not-processed), composite alert-id; duplicate-key (11000) logged and skipped
+          - sendAlertToUser()            — build payload, call notifyServiceClient
+          - updatePollutantAuditEntry()  — mark audit record processed + notificationId
+       f. If ALL notifications succeeded → markAlertProcessed()
 ```
 
 ---
@@ -347,10 +350,14 @@ alertTemplates
 Indexes created at startup:
 
 ```js
-// pollutant-alert-processing-state — prevents duplicate alert processing
+// pollutant-alert-processing-state — one document per breach EVENT.
+// Compound key (alert-id holds samplingPointId) + alert-started-timestamp so a
+// beyond-24h recurrence starts a new document instead of overwriting. Replaces
+// the old single-column unique index on alert-id (dropped by
+// migratePollutantStateToEventModel).
 db.collection('pollutant-alert-processing-state').createIndex(
-  { 'alert-id': 1 },
-  { unique: true }
+  { 'alert-id': 1, 'alert-started-timestamp': 1 },
+  { unique: true, name: 'alertId_alertStarted_unique' }
 )
 
 // pollutant-alerts-audit — fast queries by alert ID
@@ -386,17 +393,20 @@ db.collection('pollutant-alerts-audit').createIndex(
 
 ### `pollutant-alert-processing-state` (new)
 
-| Field            | Type           | Description                                       |
-| ---------------- | -------------- | ------------------------------------------------- |
-| `alert-id`       | Number         | `samplingPointId` from Ricardo API — unique index |
-| `region`         | String         | Alert region from Ricardo                         |
-| `pollutant`      | String         | Raw pollutant string (may contain HTML)           |
-| `alertText`      | String         | Alert text                                        |
-| `concentration`  | Number         | Measured concentration                            |
-| `alertThreshold` | Number \| null | Threshold value                                   |
-| `status`         | String         | `"in-progress"` or `"processed"`                  |
-| `createdAt`      | Date           | Set when first inserted                           |
-| `processedAt`    | Date           | Set when marked processed                         |
+| Field                     | Type           | Description                                                                            |
+| ------------------------- | -------------- | -------------------------------------------------------------------------------------- |
+| `alert-id`                | Number         | `samplingPointId` from Ricardo API — part of the compound unique key                   |
+| `alert-started-timestamp` | String         | Ricardo `date` of the breach-event start — the other half of the compound unique key   |
+| `lastUpdatedFromRicardo`  | String         | Ricardo `date` of the most recent reading seen for this event — anchors the 24h window |
+| `region`                  | String         | Region resolved from `siteId` via the site cache                                       |
+| `pollutant`               | String         | Raw pollutant string (may contain HTML)                                                |
+| `concentration`           | Number         | Most recent measured concentration                                                     |
+| `alertThreshold`          | Number \| null | Threshold value                                                                        |
+| `status`                  | String         | `"in-progress"` or `"processed"`                                                       |
+| `createdAt`               | Date           | Set once on insert (`$setOnInsert`)                                                    |
+| `processedAt`             | Date           | Set when marked processed                                                              |
+
+Each distinct breach event (separated by a >24h quiet gap from Ricardo) gets its own document; a repeat within 24h updates `lastUpdatedFromRicardo` on the same document without re-notifying. Legacy documents (pre-migration) carry `alert-id` and `lastUpdatedFromRicardo`; `migratePollutantStateToEventModel` backfills `alert-started-timestamp` on them from `processedAt`.
 
 **Status lifecycle:**
 

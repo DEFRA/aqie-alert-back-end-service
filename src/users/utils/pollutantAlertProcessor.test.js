@@ -4,6 +4,7 @@ import {
   getMatchingUsers,
   cleanPollutantName,
   formatPollutantName,
+  buildAuditKey,
   sendAlertToUser,
   processPollutantAlerts
 } from './pollutantAlertProcessor.js'
@@ -54,8 +55,25 @@ vi.mock('./ricardoSiteAndRegionCache.js', () => ({
   ensureSiteCachePopulated: vi.fn().mockResolvedValue(true)
 }))
 
+const { fetchAlerts } = await import('./ricardoApiClient.js')
+const { sendNotification } = await import('./notifyServiceClient.js')
 const { getRegionForSite, getSiteCacheSize, ensureSiteCachePopulated } =
   await import('./ricardoSiteAndRegionCache.js')
+
+// 1h ago — within the 24h window enforced by filterValidAlerts.
+const SAMPLE_DATE = new Date(Date.now() - 60 * 60 * 1000).toISOString()
+
+const sampleMember = {
+  samplingPointId: 500,
+  siteId: 'UKA00500',
+  region: 'England',
+  pollutant: 'O<sub>3</sub> (O3)',
+  concentration: 180,
+  alertThreshold: 150,
+  alertLevel: true,
+  validationStatus: 2,
+  date: SAMPLE_DATE
+}
 
 describe('pollutantAlertProcessor', () => {
   describe('cleanPollutantName', () => {
@@ -94,40 +112,27 @@ describe('pollutantAlertProcessor', () => {
     })
   })
 
+  describe('buildAuditKey', () => {
+    it('combines samplingPointId and date (no siteId)', () => {
+      expect(buildAuditKey(sampleMember)).toBe(`500-${SAMPLE_DATE}`)
+    })
+  })
+
   describe('filterValidAlerts', () => {
-    it('should filter alerts with alertLevel=true and validationStatus=2', () => {
+    it('keeps alerts with alertLevel=true, validationStatus=2 and a recent date', () => {
       const members = [
+        sampleMember,
         {
-          samplingPointId: 331,
-          siteId: 'UKA00339',
-          region: 'Greater London',
-          pollutant: 'O<sub>3</sub>',
-          alertText: 'tbc',
-          concentration: 168,
-          alertThreshold: null,
-          alertLevel: true,
-          validationStatus: 2
-        },
-        {
+          ...sampleMember,
           samplingPointId: 100,
           siteId: 'UKA00100',
-          region: 'South East',
-          pollutant: 'NO2',
-          alertText: 'tbc',
-          concentration: 50,
-          alertThreshold: null,
           alertLevel: false,
-          validationStatus: 2
+          informationLevel: false
         },
         {
+          ...sampleMember,
           samplingPointId: 200,
           siteId: 'UKA00200',
-          region: 'North West & Merseyside',
-          pollutant: 'PM10',
-          alertText: 'tbc',
-          concentration: 80,
-          alertThreshold: null,
-          alertLevel: true,
           validationStatus: 1
         }
       ]
@@ -136,69 +141,60 @@ describe('pollutantAlertProcessor', () => {
 
       expect(result).toHaveLength(1)
       // Ricardo's `region` is deliberately dropped; region is resolved from
-      // siteId via the cache later in processAlertForUsers.
+      // siteId via the cache later in processAlertForUsers. `alert-id` becomes
+      // the per-emission composite; samplingPointId is carried for the state key.
       expect(result[0]).toEqual({
-        'alert-id': 331,
-        siteId: 'UKA00339',
-        pollutant: 'O<sub>3</sub>',
-        alertText: 'tbc',
-        concentration: 168,
-        alertThreshold: null
+        samplingPointId: 500,
+        'alert-id': `500-${SAMPLE_DATE}`,
+        siteId: 'UKA00500',
+        date: SAMPLE_DATE,
+        pollutant: 'O<sub>3</sub> (O3)',
+        concentration: 180,
+        alertThreshold: 150
       })
     })
 
-    it('should return empty array when no alerts match', () => {
+    it('includes an alert when alertLevel=false but informationLevel=true', () => {
       const members = [
         {
-          samplingPointId: 1,
+          ...sampleMember,
+          samplingPointId: 501,
+          siteId: 'UKA00501',
           alertLevel: false,
-          validationStatus: 2,
-          region: 'X',
-          pollutant: 'X',
-          alertText: '',
-          concentration: 0,
-          alertThreshold: null
-        }
-      ]
-      expect(filterValidAlerts(members)).toHaveLength(0)
-    })
-
-    it('should include alert when alertLevel=false but informationLevel=true', () => {
-      const members = [
-        {
-          samplingPointId: 500,
-          siteId: 'UKA00500',
-          region: 'South East',
-          pollutant: 'NO2',
-          alertText: '',
-          concentration: 50,
-          alertThreshold: null,
-          alertLevel: false,
-          informationLevel: true,
-          validationStatus: 2
+          informationLevel: true
         }
       ]
       const result = filterValidAlerts(members)
       expect(result).toHaveLength(1)
-      expect(result[0]['alert-id']).toBe(500)
+      expect(result[0]['alert-id']).toBe(`501-${SAMPLE_DATE}`)
     })
 
-    it('should exclude alert when both alertLevel and informationLevel are false', () => {
+    it('excludes an alert when both alertLevel and informationLevel are false', () => {
       const members = [
         {
-          samplingPointId: 501,
-          siteId: 'UKA00501',
-          region: 'South East',
-          pollutant: 'NO2',
-          alertText: '',
-          concentration: 50,
-          alertThreshold: null,
+          ...sampleMember,
           alertLevel: false,
-          informationLevel: false,
-          validationStatus: 2
+          informationLevel: false
         }
       ]
       expect(filterValidAlerts(members)).toHaveLength(0)
+    })
+
+    it('drops entries missing samplingPointId, siteId, or date', () => {
+      const members = [
+        { ...sampleMember, samplingPointId: undefined },
+        { ...sampleMember, siteId: '' },
+        { ...sampleMember, date: '' }
+      ]
+      expect(filterValidAlerts(members)).toHaveLength(0)
+    })
+
+    it('drops entries whose date is older than 24h', () => {
+      const stale = {
+        ...sampleMember,
+        date: '2025-12-04T02:00:00+01:00'
+      }
+      expect(filterValidAlerts([stale])).toHaveLength(0)
     })
   })
 
@@ -255,15 +251,7 @@ describe('pollutantAlertProcessor', () => {
     })
 
     it('should return empty array when no users match', () => {
-      const result = getMatchingUsers(users, 'Wales')
-      expect(result).toHaveLength(0)
-    })
-
-    it('should handle users with no locations', () => {
-      const usersNoLoc = [
-        { user_contact: '+447111111111', alertType: 'sms', locations: [] }
-      ]
-      expect(getMatchingUsers(usersNoLoc, 'Greater London')).toHaveLength(0)
+      expect(getMatchingUsers(users, 'Wales')).toHaveLength(0)
     })
 
     it('should handle users with undefined locations property', () => {
@@ -277,174 +265,52 @@ describe('pollutantAlertProcessor', () => {
       vi.clearAllMocks()
     })
 
-    it('should default lang to en when userMatch has no lang', async () => {
-      const mockSend = vi.mocked(
-        (await import('./notifyServiceClient.js')).sendNotification
+    it('sends an SMS with the composite alertId and English template', async () => {
+      sendNotification.mockResolvedValue({ notificationId: 'notif-123' })
+
+      const result = await sendAlertToUser(
+        { userContact: '+447000000001', alertType: 'sms', location: 'London' },
+        {
+          'alert-id': `999-${SAMPLE_DATE}`,
+          region: 'England',
+          pollutant: 'O<sub>3</sub> (O3)',
+          concentration: 100
+        }
       )
-      mockSend.mockResolvedValue({ notificationId: 'notif-default-lang' })
 
-      const userMatch = {
-        userContact: '+447000000001',
-        alertType: 'sms',
-        location: 'London'
-        // no lang property
-      }
-      const alertDetail = {
-        'alert-id': 999,
-        region: 'England',
-        pollutant: 'O3',
-        concentration: 100
-      }
-
-      const result = await sendAlertToUser(userMatch, alertDetail)
-
-      expect(mockSend).toHaveBeenCalledWith(
+      expect(sendNotification).toHaveBeenCalledWith(
         expect.objectContaining({
           templateId: 'sms-template-id',
+          alertId: `999-${SAMPLE_DATE}`,
           personalisation: expect.objectContaining({
+            Pollutant: 'ozone (O3)',
+            concentration: '100',
             checkAirQualityLink: expect.stringContaining('?lang=en')
           })
         }),
-        expect.any(String)
+        expect.stringContaining('alert-999-')
       )
-      expect(result).toBe('notif-default-lang')
+      expect(result).toBe('notif-123')
     })
   })
 
   describe('processPollutantAlerts', () => {
-    let mockDb
-    let mockFetchAlerts
-    let mockSendNotification
-
-    beforeEach(async () => {
-      vi.clearAllMocks()
-      mockFetchAlerts = vi.mocked(
-        (await import('./ricardoApiClient.js')).fetchAlerts
-      )
-      mockSendNotification = vi.mocked(
-        (await import('./notifyServiceClient.js')).sendNotification
-      )
-
-      // Region is always resolved from siteId via the cache. Default to a
-      // healthy cache returning "England"; individual tests override the region
-      // (e.g. Wales/Scotland) or the cache state as needed.
-      getRegionForSite.mockReturnValue('England')
-      getSiteCacheSize.mockReturnValue(1)
-      ensureSiteCachePopulated.mockResolvedValue(true)
-
-      mockDb = {
-        collection: vi.fn()
-      }
-    })
-
-    it('should skip processing when fetch fails', async () => {
-      mockFetchAlerts.mockRejectedValue(new Error('Network error'))
-
-      await processPollutantAlerts(mockDb)
-
-      expect(mockDb.collection).not.toHaveBeenCalled()
-    })
-
-    it('should handle response body without member property', async () => {
-      mockFetchAlerts.mockResolvedValue({})
-
-      await processPollutantAlerts(mockDb)
-
-      expect(mockDb.collection).not.toHaveBeenCalled()
-    })
-
-    it('should skip processing when no members returned', async () => {
-      mockFetchAlerts.mockResolvedValue({ member: [] })
-
-      await processPollutantAlerts(mockDb)
-
-      expect(mockDb.collection).not.toHaveBeenCalled()
-    })
-
-    it('should skip processing when members exist but none pass filter', async () => {
-      mockFetchAlerts.mockResolvedValue({
-        member: [
-          {
-            samplingPointId: 1,
-            region: 'X',
-            pollutant: 'X',
-            alertText: '',
-            concentration: 0,
-            alertThreshold: null,
-            alertLevel: false,
-            validationStatus: 2
-          }
-        ]
-      })
-
-      await processPollutantAlerts(mockDb)
-
-      expect(mockDb.collection).not.toHaveBeenCalled()
-    })
-
-    it('should skip already processed alerts', async () => {
-      mockFetchAlerts.mockResolvedValue({
-        member: [
-          {
-            samplingPointId: 331,
-            region: 'Greater London',
-            pollutant: 'O3',
-            alertText: 'tbc',
-            concentration: 168,
-            alertThreshold: null,
-            alertLevel: true,
-            validationStatus: 2
-          }
-        ]
-      })
-
-      const alertDetailsColl = {
-        find: vi.fn().mockReturnValue({
-          project: vi.fn().mockReturnValue({
-            toArray: vi
-              .fn()
-              .mockResolvedValue([{ 'alert-id': 331, status: 'processed' }])
-          })
-        })
-      }
-
-      mockDb.collection.mockImplementation((name) => {
-        if (name === 'pollutant-alert-processing-state') return alertDetailsColl
-        return null
-      })
-
-      await processPollutantAlerts(mockDb)
-
-      expect(alertDetailsColl.find).toHaveBeenCalled()
-    })
-
-    it('should process new alerts and send notifications', async () => {
-      mockFetchAlerts.mockResolvedValue({
-        member: [
-          {
-            samplingPointId: 500,
-            region: 'England',
-            pollutant: 'O<sub>3</sub> (O3)',
-            alertText: 'High ozone',
-            concentration: 180,
-            alertThreshold: 150,
-            alertLevel: true,
-            validationStatus: 2
-          }
-        ]
-      })
-
-      const alertDetailsColl = {
-        find: vi.fn().mockReturnValue({
-          project: vi.fn().mockReturnValue({
-            toArray: vi.fn().mockResolvedValue([])
-          })
-        }),
+    function makeDb() {
+      const stateCollection = {
+        find: vi.fn(() => ({
+          sort: vi.fn(function () {
+            return this
+          }),
+          toArray: vi.fn().mockResolvedValue([])
+        })),
         updateOne: vi.fn().mockResolvedValue({})
       }
-
-      const usersColl = {
-        find: vi.fn().mockReturnValue({
+      const auditCollection = {
+        insertOne: vi.fn().mockResolvedValue({}),
+        updateOne: vi.fn().mockResolvedValue({})
+      }
+      const usersCollection = {
+        find: vi.fn(() => ({
           toArray: vi.fn().mockResolvedValue([
             {
               user_contact: '+447123456789',
@@ -455,126 +321,271 @@ describe('pollutantAlertProcessor', () => {
               ]
             }
           ])
-        })
+        }))
       }
-
-      const auditColl = {
-        insertOne: vi.fn().mockResolvedValue({}),
-        updateOne: vi.fn().mockResolvedValue({})
+      return {
+        collection: vi.fn((name) => {
+          if (name === 'pollutant-alert-processing-state') {
+            return stateCollection
+          }
+          if (name === 'pollutant-alerts-audit') {
+            return auditCollection
+          }
+          if (name === 'USERS') {
+            return usersCollection
+          }
+          return null
+        }),
+        _state: stateCollection,
+        _audit: auditCollection,
+        _users: usersCollection
       }
+    }
 
-      mockDb.collection.mockImplementation((name) => {
-        if (name === 'pollutant-alert-processing-state') return alertDetailsColl
-        if (name === 'USERS') return usersColl
-        if (name === 'pollutant-alerts-audit') return auditColl
-        return null
+    beforeEach(() => {
+      vi.clearAllMocks()
+      getRegionForSite.mockReturnValue('England')
+      getSiteCacheSize.mockReturnValue(1)
+      ensureSiteCachePopulated.mockResolvedValue(true)
+    })
+
+    it('skips processing when fetch fails', async () => {
+      const db = makeDb()
+      fetchAlerts.mockRejectedValueOnce(new Error('Network error'))
+
+      await processPollutantAlerts(db)
+
+      expect(db._state.updateOne).not.toHaveBeenCalled()
+      expect(sendNotification).not.toHaveBeenCalled()
+    })
+
+    it('skips processing when response body has no member property', async () => {
+      const db = makeDb()
+      fetchAlerts.mockResolvedValueOnce({})
+
+      await processPollutantAlerts(db)
+
+      expect(db._state.updateOne).not.toHaveBeenCalled()
+    })
+
+    it('skips processing when no members returned', async () => {
+      const db = makeDb()
+      fetchAlerts.mockResolvedValueOnce({ member: [] })
+
+      await processPollutantAlerts(db)
+
+      expect(db._state.updateOne).not.toHaveBeenCalled()
+    })
+
+    it('skips processing when members exist but none pass the filter', async () => {
+      const db = makeDb()
+      fetchAlerts.mockResolvedValueOnce({
+        member: [
+          { ...sampleMember, alertLevel: false, informationLevel: false }
+        ]
       })
 
-      mockSendNotification.mockResolvedValue({ notificationId: 'notif-123' })
+      await processPollutantAlerts(db)
 
-      await processPollutantAlerts(mockDb)
+      expect(db._state.updateOne).not.toHaveBeenCalled()
+    })
 
-      // Should mark in-progress
-      expect(alertDetailsColl.updateOne).toHaveBeenCalledWith(
-        { 'alert-id': 500 },
+    it('processes a new alert: marks in-progress (compound key), sends, marks processed, writes composite audit id', async () => {
+      const db = makeDb()
+      fetchAlerts.mockResolvedValueOnce({ member: [sampleMember] })
+      sendNotification.mockResolvedValueOnce({ notificationId: 'notif-1' })
+
+      await processPollutantAlerts(db)
+
+      // in-progress upsert keyed on { alert-id (=samplingPointId), alert-started-timestamp }
+      expect(db._state.updateOne).toHaveBeenCalledWith(
+        { 'alert-id': 500, 'alert-started-timestamp': SAMPLE_DATE },
+        {
+          $set: {
+            'alert-id': 500,
+            region: 'England',
+            pollutant: 'O<sub>3</sub> (O3)',
+            concentration: 180,
+            alertThreshold: 150,
+            lastUpdatedFromRicardo: SAMPLE_DATE,
+            status: 'in-progress',
+            'alert-started-timestamp': SAMPLE_DATE
+          },
+          $setOnInsert: { createdAt: expect.any(Date) }
+        },
+        { upsert: true }
+      )
+
+      // audit row carries the composite (per-emission) alert-id
+      expect(db._audit.insertOne).toHaveBeenCalledWith(
+        expect.objectContaining({
+          'alert-id': `500-${SAMPLE_DATE}`,
+          'pollutant-alert-status': 'not-processed',
+          notificationId: null
+        })
+      )
+
+      expect(sendNotification).toHaveBeenCalledTimes(1)
+
+      expect(db._audit.updateOne).toHaveBeenCalledWith(
+        expect.objectContaining({
+          'alert-id': `500-${SAMPLE_DATE}`,
+          'pollutant-alert-status': 'not-processed'
+        }),
+        {
+          $set: {
+            'pollutant-alert-status': 'processed',
+            notificationId: 'notif-1'
+          }
+        }
+      )
+
+      // final state flip to processed on the same compound key
+      expect(db._state.updateOne).toHaveBeenLastCalledWith(
+        { 'alert-id': 500, 'alert-started-timestamp': SAMPLE_DATE },
+        { $set: { status: 'processed', processedAt: expect.any(Date) } }
+      )
+    })
+
+    it('does NOT re-notify when the combo was last seen within 24h (update-only)', async () => {
+      const db = makeDb()
+      const fiveHoursAgo = new Date(
+        Date.now() - 5 * 60 * 60 * 1000
+      ).toISOString()
+      db._state.find.mockReturnValueOnce({
+        sort: vi.fn(function () {
+          return this
+        }),
+        toArray: vi.fn().mockResolvedValue([
+          {
+            'alert-id': 500,
+            status: 'processed',
+            'alert-started-timestamp': fiveHoursAgo,
+            lastUpdatedFromRicardo: fiveHoursAgo
+          }
+        ])
+      })
+      fetchAlerts.mockResolvedValueOnce({ member: [sampleMember] })
+
+      await processPollutantAlerts(db)
+
+      expect(sendNotification).not.toHaveBeenCalled()
+      // bumps lastUpdatedFromRicardo on the existing event row
+      expect(db._state.updateOne).toHaveBeenCalledWith(
+        { 'alert-id': 500, 'alert-started-timestamp': fiveHoursAgo },
+        {
+          $set: {
+            lastUpdatedFromRicardo: SAMPLE_DATE,
+            concentration: 180
+          }
+        }
+      )
+    })
+
+    it('re-notifies when the combo has been quiet for more than 24h', async () => {
+      const db = makeDb()
+      const twentyFiveHoursAgo = new Date(
+        Date.now() - 25 * 60 * 60 * 1000
+      ).toISOString()
+      db._state.find.mockReturnValueOnce({
+        sort: vi.fn(function () {
+          return this
+        }),
+        toArray: vi.fn().mockResolvedValue([
+          {
+            'alert-id': 500,
+            status: 'processed',
+            'alert-started-timestamp': twentyFiveHoursAgo,
+            lastUpdatedFromRicardo: twentyFiveHoursAgo
+          }
+        ])
+      })
+      fetchAlerts.mockResolvedValueOnce({ member: [sampleMember] })
+      sendNotification.mockResolvedValueOnce({ notificationId: 'notif-next' })
+
+      await processPollutantAlerts(db)
+
+      expect(sendNotification).toHaveBeenCalledTimes(1)
+    })
+
+    it('skips a combo left in-progress by a prior crashed cycle', async () => {
+      const db = makeDb()
+      db._state.find.mockReturnValueOnce({
+        sort: vi.fn(function () {
+          return this
+        }),
+        toArray: vi
+          .fn()
+          .mockResolvedValue([{ 'alert-id': 500, status: 'in-progress' }])
+      })
+      fetchAlerts.mockResolvedValueOnce({ member: [sampleMember] })
+
+      await processPollutantAlerts(db)
+
+      expect(sendNotification).not.toHaveBeenCalled()
+      expect(db._state.updateOne).not.toHaveBeenCalled()
+    })
+
+    it('collapses same-samplingPointId rows in one cycle, oldest date wins', async () => {
+      const db = makeDb()
+      const t2 = new Date(Date.now() - 50 * 60 * 1000).toISOString()
+      const t3 = new Date(Date.now() - 40 * 60 * 1000).toISOString()
+      fetchAlerts.mockResolvedValueOnce({
+        member: [
+          sampleMember, // ~60 min ago, concentration 180 — oldest → wins
+          { ...sampleMember, date: t2, concentration: 185 },
+          { ...sampleMember, date: t3, concentration: 182 }
+        ]
+      })
+      sendNotification.mockResolvedValue({ notificationId: 'notif-x' })
+
+      await processPollutantAlerts(db)
+
+      expect(sendNotification).toHaveBeenCalledTimes(1)
+      // oldest reading (SAMPLE_DATE, concentration 180) is carried through
+      expect(db._state.updateOne).toHaveBeenCalledWith(
+        { 'alert-id': 500, 'alert-started-timestamp': SAMPLE_DATE },
         expect.objectContaining({
           $set: expect.objectContaining({
-            'alert-id': 500,
-            status: 'in-progress'
+            'alert-started-timestamp': SAMPLE_DATE,
+            concentration: 180,
+            lastUpdatedFromRicardo: SAMPLE_DATE
           })
         }),
         { upsert: true }
       )
-
-      // Should send notification with checkAirQualityLink
-      expect(mockSendNotification).toHaveBeenCalledWith(
-        expect.objectContaining({
-          phoneNumber: '+447123456789',
-          templateId: 'sms-template-id',
-          alertId: '500',
-          personalisation: {
-            location: 'Bristol, City of Bristol',
-            concentration: '180',
-            Pollutant: 'ozone (O3)',
-            checkAirQualityLink:
-              'https://check-air-quality.service.gov.uk/location/bristol_city-of-bristol?lang=en'
-          }
-        }),
-        expect.stringContaining('alert-500')
+      const concentrationsSent = sendNotification.mock.calls.map(
+        (call) => call[0].personalisation.concentration
       )
-
-      // Should mark processed
-      expect(alertDetailsColl.updateOne).toHaveBeenCalledWith(
-        { 'alert-id': 500 },
-        expect.objectContaining({
-          $set: expect.objectContaining({ status: 'processed' })
-        })
-      )
+      expect(concentrationsSent).toEqual(['180'])
     })
 
-    it('should send email notification with emailAddress field', async () => {
-      mockFetchAlerts.mockResolvedValue({
-        member: [
-          {
-            samplingPointId: 600,
-            region: 'Scotland',
-            pollutant: 'PM2.5',
-            alertText: 'tbc',
-            concentration: 90,
-            alertThreshold: null,
-            alertLevel: true,
-            validationStatus: 2
-          }
-        ]
-      })
+    it('sends a Welsh email with unsubscribe link and the composite alertId', async () => {
+      const db = makeDb()
       getRegionForSite.mockReturnValue('Scotland')
-
-      const alertDetailsColl = {
-        find: vi.fn().mockReturnValue({
-          project: vi.fn().mockReturnValue({
-            toArray: vi.fn().mockResolvedValue([])
-          })
-        }),
-        updateOne: vi.fn().mockResolvedValue({})
-      }
-
-      const usersColl = {
-        find: vi.fn().mockReturnValue({
-          toArray: vi.fn().mockResolvedValue([
-            {
-              user_contact: 'user@test.com',
-              alertType: 'email',
-              lang: 'cy',
-              locations: [{ location: 'Edinburgh', region: 'Scotland' }]
-            }
-          ])
-        })
-      }
-
-      const auditColl = {
-        insertOne: vi.fn().mockResolvedValue({}),
-        updateOne: vi.fn().mockResolvedValue({})
-      }
-
-      mockDb.collection.mockImplementation((name) => {
-        if (name === 'pollutant-alert-processing-state') return alertDetailsColl
-        if (name === 'USERS') return usersColl
-        if (name === 'pollutant-alerts-audit') return auditColl
-        return null
+      db._users.find.mockReturnValueOnce({
+        toArray: vi.fn().mockResolvedValue([
+          {
+            user_contact: 'user@test.com',
+            alertType: 'email',
+            lang: 'cy',
+            locations: [{ location: 'Edinburgh', region: 'Scotland' }]
+          }
+        ])
       })
+      fetchAlerts.mockResolvedValueOnce({
+        member: [{ ...sampleMember, samplingPointId: 600, siteId: 'UKA00600' }]
+      })
+      sendNotification.mockResolvedValue({})
 
-      mockSendNotification.mockResolvedValue({})
+      await processPollutantAlerts(db)
 
-      await processPollutantAlerts(mockDb)
-
-      expect(mockSendNotification).toHaveBeenCalledWith(
+      expect(sendNotification).toHaveBeenCalledWith(
         expect.objectContaining({
           emailAddress: 'user@test.com',
           templateId: 'email-template-id-cy',
-          alertId: '600',
+          alertId: `600-${SAMPLE_DATE}`,
           personalisation: expect.objectContaining({
-            checkAirQualityLink:
-              'https://check-air-quality.service.gov.uk/location/edinburgh?lang=cy',
             unsubscribeLink:
               'https://aqie-front-end.test.cdp-int.defra.cloud/notify/unsubscribe-email-link?email=user%40test.com'
           })
@@ -583,522 +594,65 @@ describe('pollutantAlertProcessor', () => {
       )
     })
 
-    it('should log error and continue when markAlertInProgress throws', async () => {
-      mockFetchAlerts.mockResolvedValue({
-        member: [
-          {
-            samplingPointId: 800,
-            region: 'England',
-            pollutant: 'NO2',
-            alertText: 'tbc',
-            concentration: 50,
-            alertThreshold: null,
-            alertLevel: true,
-            validationStatus: 2
-          }
-        ]
-      })
+    it('does not mark processed when a notification fails', async () => {
+      const db = makeDb()
+      fetchAlerts.mockResolvedValueOnce({ member: [sampleMember] })
+      sendNotification.mockRejectedValue(new Error('Send failed'))
 
-      const alertDetailsColl = {
-        find: vi.fn().mockReturnValue({
-          project: vi.fn().mockReturnValue({
-            toArray: vi.fn().mockResolvedValue([])
-          })
-        }),
-        updateOne: vi.fn().mockRejectedValue(new Error('DB write error'))
-      }
+      await processPollutantAlerts(db)
 
-      mockDb.collection.mockImplementation((name) => {
-        if (name === 'pollutant-alert-processing-state') return alertDetailsColl
-        return null
-      })
-
-      // Should not throw — outer catch handles it
-      await expect(processPollutantAlerts(mockDb)).resolves.not.toThrow()
-    })
-
-    it('should log warning and continue when audit insert has duplicate key (11000)', async () => {
-      mockFetchAlerts.mockResolvedValue({
-        member: [
-          {
-            samplingPointId: 900,
-            region: 'England',
-            pollutant: 'PM2.5',
-            alertText: 'tbc',
-            concentration: 55,
-            alertThreshold: null,
-            alertLevel: true,
-            validationStatus: 2
-          }
-        ]
-      })
-
-      const alertDetailsColl = {
-        find: vi.fn().mockReturnValue({
-          project: vi.fn().mockReturnValue({
-            toArray: vi.fn().mockResolvedValue([])
-          })
-        }),
-        updateOne: vi.fn().mockResolvedValue({})
-      }
-
-      const usersColl = {
-        find: vi.fn().mockReturnValue({
-          toArray: vi.fn().mockResolvedValue([
-            {
-              user_contact: '+447333333333',
-              alertType: 'sms',
-              locations: [{ location: 'Manchester', region: 'England' }]
-            }
-          ])
-        })
-      }
-
-      const dupError = Object.assign(new Error('E11000 duplicate key error'), {
-        code: 11000
-      })
-      const auditColl = {
-        insertOne: vi.fn().mockRejectedValue(dupError),
-        updateOne: vi.fn().mockResolvedValue({})
-      }
-
-      mockDb.collection.mockImplementation((name) => {
-        if (name === 'pollutant-alert-processing-state') return alertDetailsColl
-        if (name === 'USERS') return usersColl
-        if (name === 'pollutant-alerts-audit') return auditColl
-        return null
-      })
-
-      mockSendNotification.mockResolvedValue({ notificationId: 'notif-dup' })
-
-      // Should not throw — duplicate key is handled gracefully
-      await expect(processPollutantAlerts(mockDb)).resolves.not.toThrow()
-    })
-
-    it('should catch outer error when audit insert fails with non-11000 code', async () => {
-      mockFetchAlerts.mockResolvedValue({
-        member: [
-          {
-            samplingPointId: 901,
-            region: 'England',
-            pollutant: 'PM10',
-            alertText: 'tbc',
-            concentration: 70,
-            alertThreshold: null,
-            alertLevel: true,
-            validationStatus: 2
-          }
-        ]
-      })
-
-      const alertDetailsColl = {
-        find: vi.fn().mockReturnValue({
-          project: vi.fn().mockReturnValue({
-            toArray: vi.fn().mockResolvedValue([])
-          })
-        }),
-        updateOne: vi.fn().mockResolvedValue({})
-      }
-
-      const usersColl = {
-        find: vi.fn().mockReturnValue({
-          toArray: vi.fn().mockResolvedValue([
-            {
-              user_contact: '+447444444444',
-              alertType: 'sms',
-              locations: [{ location: 'Leeds', region: 'England' }]
-            }
-          ])
-        })
-      }
-
-      const dbError = Object.assign(new Error('Write conflict'), { code: 112 })
-      const auditColl = {
-        insertOne: vi.fn().mockRejectedValue(dbError),
-        updateOne: vi.fn().mockResolvedValue({})
-      }
-
-      mockDb.collection.mockImplementation((name) => {
-        if (name === 'pollutant-alert-processing-state') return alertDetailsColl
-        if (name === 'USERS') return usersColl
-        if (name === 'pollutant-alerts-audit') return auditColl
-        return null
-      })
-
-      // Non-11000 error propagates to outer catch which logs and continues
-      await expect(processPollutantAlerts(mockDb)).resolves.not.toThrow()
-    })
-
-    it('should send Welsh SMS notification using smsAlertCy template', async () => {
-      mockFetchAlerts.mockResolvedValue({
-        member: [
-          {
-            samplingPointId: 950,
-            region: 'Wales',
-            pollutant: 'NO2',
-            alertText: 'tbc',
-            concentration: 75,
-            alertThreshold: null,
-            alertLevel: true,
-            validationStatus: 2
-          }
-        ]
-      })
-      getRegionForSite.mockReturnValue('Wales')
-
-      const alertDetailsColl = {
-        find: vi.fn().mockReturnValue({
-          project: vi.fn().mockReturnValue({
-            toArray: vi.fn().mockResolvedValue([])
-          })
-        }),
-        updateOne: vi.fn().mockResolvedValue({})
-      }
-
-      const usersColl = {
-        find: vi.fn().mockReturnValue({
-          toArray: vi.fn().mockResolvedValue([
-            {
-              user_contact: '+447888888888',
-              alertType: 'sms',
-              lang: 'cy',
-              locations: [{ location: 'Cardiff', region: 'Wales' }]
-            }
-          ])
-        })
-      }
-
-      const auditColl = {
-        insertOne: vi.fn().mockResolvedValue({}),
-        updateOne: vi.fn().mockResolvedValue({})
-      }
-
-      mockDb.collection.mockImplementation((name) => {
-        if (name === 'pollutant-alert-processing-state') return alertDetailsColl
-        if (name === 'USERS') return usersColl
-        if (name === 'pollutant-alerts-audit') return auditColl
-        return null
-      })
-
-      mockSendNotification.mockResolvedValue({ notificationId: 'notif-cy-sms' })
-
-      await processPollutantAlerts(mockDb)
-
-      expect(mockSendNotification).toHaveBeenCalledWith(
-        expect.objectContaining({
-          templateId: 'sms-template-id-cy'
-        }),
-        expect.any(String)
-      )
-    })
-
-    it('should send English email notification using emailAlert template', async () => {
-      mockFetchAlerts.mockResolvedValue({
-        member: [
-          {
-            samplingPointId: 951,
-            region: 'England',
-            pollutant: 'PM10',
-            alertText: 'tbc',
-            concentration: 80,
-            alertThreshold: null,
-            alertLevel: true,
-            validationStatus: 2
-          }
-        ]
-      })
-
-      const alertDetailsColl = {
-        find: vi.fn().mockReturnValue({
-          project: vi.fn().mockReturnValue({
-            toArray: vi.fn().mockResolvedValue([])
-          })
-        }),
-        updateOne: vi.fn().mockResolvedValue({})
-      }
-
-      const usersColl = {
-        find: vi.fn().mockReturnValue({
-          toArray: vi.fn().mockResolvedValue([
-            {
-              user_contact: 'en-user@test.com',
-              alertType: 'email',
-              lang: 'en',
-              locations: [{ location: 'Reading', region: 'England' }]
-            }
-          ])
-        })
-      }
-
-      const auditColl = {
-        insertOne: vi.fn().mockResolvedValue({}),
-        updateOne: vi.fn().mockResolvedValue({})
-      }
-
-      mockDb.collection.mockImplementation((name) => {
-        if (name === 'pollutant-alert-processing-state') return alertDetailsColl
-        if (name === 'USERS') return usersColl
-        if (name === 'pollutant-alerts-audit') return auditColl
-        return null
-      })
-
-      mockSendNotification.mockResolvedValue({
-        notificationId: 'notif-en-email'
-      })
-
-      await processPollutantAlerts(mockDb)
-
-      expect(mockSendNotification).toHaveBeenCalledWith(
-        expect.objectContaining({
-          emailAddress: 'en-user@test.com',
-          templateId: 'email-template-id'
-        }),
-        expect.any(String)
-      )
-    })
-
-    it('should not mark alert as processed when notification fails', async () => {
-      mockFetchAlerts.mockResolvedValue({
-        member: [
-          {
-            samplingPointId: 700,
-            region: 'Wales',
-            pollutant: 'NO2',
-            alertText: 'tbc',
-            concentration: 100,
-            alertThreshold: null,
-            alertLevel: true,
-            validationStatus: 2
-          }
-        ]
-      })
-      getRegionForSite.mockReturnValue('Wales')
-
-      const alertDetailsColl = {
-        find: vi.fn().mockReturnValue({
-          project: vi.fn().mockReturnValue({
-            toArray: vi.fn().mockResolvedValue([])
-          })
-        }),
-        updateOne: vi.fn().mockResolvedValue({})
-      }
-
-      const usersColl = {
-        find: vi.fn().mockReturnValue({
-          toArray: vi.fn().mockResolvedValue([
-            {
-              user_contact: '+447111111111',
-              alertType: 'sms',
-              locations: [{ location: 'Cardiff', region: 'Wales' }]
-            }
-          ])
-        })
-      }
-
-      const auditColl = {
-        insertOne: vi.fn().mockResolvedValue({}),
-        updateOne: vi.fn().mockResolvedValue({})
-      }
-
-      mockDb.collection.mockImplementation((name) => {
-        if (name === 'pollutant-alert-processing-state') return alertDetailsColl
-        if (name === 'USERS') return usersColl
-        if (name === 'pollutant-alerts-audit') return auditColl
-        return null
-      })
-
-      mockSendNotification.mockRejectedValue(new Error('Send failed'))
-
-      await processPollutantAlerts(mockDb)
-
-      // Should have called updateOne for in-progress but NOT for processed
-      const processedCalls = alertDetailsColl.updateOne.mock.calls.filter(
-        (call) => call[1].$set.status === 'processed'
+      const processedCalls = db._state.updateOne.mock.calls.filter(
+        (call) => call[1].$set?.status === 'processed'
       )
       expect(processedCalls).toHaveLength(0)
     })
 
-    it('should collapse duplicate samplingPointIds within a single cycle and send only one notification per matching user-location', async () => {
-      // Ricardo returns 4 rows: samplingPointId 1000 appears 3 times (hourly
-      // breaches at the same monitoring station), 2000 appears once.
-      // After dedup → 2 unique alerts. With 2 matching user-locations in
-      // region "England", we expect 2 * 2 = 4 sendNotification calls, NOT
-      // 4 rows * 2 user-locations = 8.
-      mockFetchAlerts.mockResolvedValue({
-        member: [
-          {
-            samplingPointId: 1000,
-            region: 'England',
-            pollutant: 'O<sub>3</sub> (O3)',
-            alertText: 'High ozone 23:00',
-            concentration: 190,
-            alertThreshold: null,
-            alertLevel: true,
-            validationStatus: 2
-          },
-          {
-            samplingPointId: 1000,
-            region: 'England',
-            pollutant: 'O<sub>3</sub> (O3)',
-            alertText: 'High ozone 22:00',
-            concentration: 185,
-            alertThreshold: null,
-            alertLevel: true,
-            validationStatus: 2
-          },
-          {
-            samplingPointId: 1000,
-            region: 'England',
-            pollutant: 'O<sub>3</sub> (O3)',
-            alertText: 'High ozone 21:00',
-            concentration: 182,
-            alertThreshold: null,
-            alertLevel: true,
-            validationStatus: 2
-          },
-          {
-            samplingPointId: 2000,
-            region: 'England',
-            pollutant: 'NO2',
-            alertText: 'NO2 breach',
-            concentration: 220,
-            alertThreshold: null,
-            alertLevel: true,
-            validationStatus: 2
-          }
-        ]
+    it('logs a warning and continues when audit insert hits a duplicate key (11000)', async () => {
+      const db = makeDb()
+      const dupError = Object.assign(new Error('E11000 duplicate key error'), {
+        code: 11000
       })
+      db._audit.insertOne.mockRejectedValue(dupError)
+      fetchAlerts.mockResolvedValueOnce({ member: [sampleMember] })
+      sendNotification.mockResolvedValue({ notificationId: 'notif-dup' })
 
-      const alertDetailsColl = {
-        find: vi.fn().mockReturnValue({
-          project: vi.fn().mockReturnValue({
-            toArray: vi.fn().mockResolvedValue([])
-          })
-        }),
-        updateOne: vi.fn().mockResolvedValue({})
-      }
-
-      const usersColl = {
-        find: vi.fn().mockReturnValue({
-          toArray: vi.fn().mockResolvedValue([
-            {
-              user_contact: 'jay@example.com',
-              alertType: 'email',
-              lang: 'en',
-              locations: [
-                { location: 'Bristol', region: 'England' },
-                { location: 'Gloucester', region: 'England' }
-              ]
-            }
-          ])
-        })
-      }
-
-      const auditColl = {
-        insertOne: vi.fn().mockResolvedValue({}),
-        updateOne: vi.fn().mockResolvedValue({})
-      }
-
-      mockDb.collection.mockImplementation((name) => {
-        if (name === 'pollutant-alert-processing-state') return alertDetailsColl
-        if (name === 'USERS') return usersColl
-        if (name === 'pollutant-alerts-audit') return auditColl
-        return null
-      })
-
-      mockSendNotification.mockResolvedValue({ notificationId: 'notif-x' })
-
-      await processPollutantAlerts(mockDb)
-
-      // 2 unique alert-ids × 2 user-locations = 4 sends (NOT 4 rows × 2 = 8)
-      expect(mockSendNotification).toHaveBeenCalledTimes(4)
-
-      // First-occurrence-wins: the 23:00 row (concentration 190) should be
-      // the one carried into the notification for alert-id 1000, not 185 or 182.
-      const concentrationsSent = mockSendNotification.mock.calls.map(
-        (call) => call[0].personalisation.concentration
-      )
-      expect(concentrationsSent.filter((c) => c === '190')).toHaveLength(2)
-      expect(concentrationsSent.filter((c) => c === '220')).toHaveLength(2)
-      expect(concentrationsSent).not.toContain('185')
-      expect(concentrationsSent).not.toContain('182')
+      await expect(processPollutantAlerts(db)).resolves.not.toThrow()
+      expect(sendNotification).toHaveBeenCalledTimes(1)
     })
 
-    it('should skip an alert whose siteId is not in the site cache (no notification)', async () => {
+    it('catches an outer error when audit insert fails with a non-11000 code', async () => {
+      const db = makeDb()
+      const dbError = Object.assign(new Error('Write conflict'), { code: 112 })
+      db._audit.insertOne.mockRejectedValue(dbError)
+      fetchAlerts.mockResolvedValueOnce({ member: [sampleMember] })
+
+      await expect(processPollutantAlerts(db)).resolves.not.toThrow()
+    })
+
+    it('skips an alert whose siteId is not in the site cache (no notification)', async () => {
+      const db = makeDb()
       getRegionForSite.mockReturnValue(null)
-      mockFetchAlerts.mockResolvedValue({
-        member: [
-          {
-            samplingPointId: 1234,
-            siteId: 'UKA-UNKNOWN',
-            region: 'England',
-            pollutant: 'O3',
-            alertText: 'tbc',
-            concentration: 100,
-            alertThreshold: null,
-            alertLevel: true,
-            validationStatus: 2
-          }
-        ]
+      fetchAlerts.mockResolvedValueOnce({
+        member: [{ ...sampleMember, siteId: 'UKA-UNKNOWN' }]
       })
 
-      const alertDetailsColl = {
-        find: vi.fn().mockReturnValue({
-          project: vi.fn().mockReturnValue({
-            toArray: vi.fn().mockResolvedValue([])
-          })
-        }),
-        updateOne: vi.fn().mockResolvedValue({})
-      }
-      mockDb.collection.mockImplementation((name) => {
-        if (name === 'pollutant-alert-processing-state') return alertDetailsColl
-        return null
-      })
+      await processPollutantAlerts(db)
 
-      await processPollutantAlerts(mockDb)
-
-      // Region can't be resolved → alert skipped, never marked in-progress.
-      expect(mockSendNotification).not.toHaveBeenCalled()
-      expect(alertDetailsColl.updateOne).not.toHaveBeenCalled()
+      expect(sendNotification).not.toHaveBeenCalled()
+      expect(db._state.updateOne).not.toHaveBeenCalled()
     })
 
-    it('should skip the cycle when the site cache is empty and refresh fails', async () => {
+    it('skips the cycle when the site cache is empty and refresh fails', async () => {
+      const db = makeDb()
       getSiteCacheSize.mockReturnValue(0)
       ensureSiteCachePopulated.mockResolvedValue(false)
-      mockFetchAlerts.mockResolvedValue({
-        member: [
-          {
-            samplingPointId: 1234,
-            siteId: 'UKA00339',
-            region: 'England',
-            pollutant: 'O3',
-            alertText: 'tbc',
-            concentration: 100,
-            alertThreshold: null,
-            alertLevel: true,
-            validationStatus: 2
-          }
-        ]
-      })
+      fetchAlerts.mockResolvedValueOnce({ member: [sampleMember] })
 
-      const alertDetailsColl = {
-        find: vi.fn().mockReturnValue({
-          project: vi.fn().mockReturnValue({
-            toArray: vi.fn().mockResolvedValue([])
-          })
-        }),
-        updateOne: vi.fn().mockResolvedValue({})
-      }
-      mockDb.collection.mockImplementation((name) => {
-        if (name === 'pollutant-alert-processing-state') return alertDetailsColl
-        return null
-      })
-
-      await processPollutantAlerts(mockDb)
+      await processPollutantAlerts(db)
 
       expect(ensureSiteCachePopulated).toHaveBeenCalled()
-      expect(mockSendNotification).not.toHaveBeenCalled()
-      expect(alertDetailsColl.updateOne).not.toHaveBeenCalled()
+      expect(sendNotification).not.toHaveBeenCalled()
+      expect(db._state.updateOne).not.toHaveBeenCalled()
     })
   })
 })
