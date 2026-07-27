@@ -257,16 +257,31 @@ describe('ricardoApiClient', () => {
         totalItems: 1,
         member: [{ id: 1187, siteId: 'UKA00128', alertLevel: true }]
       }
-      const { fetchAlerts, fetch } = await setup({ useMock: true })
+      const { fetchAlerts, fetch, Agent } = await setup({ useMock: true })
       fetch.mockResolvedValue(makeResponse({ json: wiremockResponse }))
 
       const data = await fetchAlerts()
 
       expect(data).toEqual(wiremockResponse)
-      expect(fetch).toHaveBeenCalledWith(
-        'https://wiremock.test/aqsr_alerts',
-        expect.objectContaining({ signal: expect.any(Object) })
+      const [url, options] = fetch.mock.calls[0]
+      expect(url).toBe('https://wiremock.test/aqsr_alerts')
+      expect(options).toMatchObject({ signal: expect.any(Object) })
+      expect(options.dispatcher).toBeInstanceOf(Agent)
+    })
+
+    it('does not attach a dispatcher to the WireMock AQSR call in production without a proxy', async () => {
+      const { fetchAlerts, fetch } = await setup({
+        useMock: true,
+        nodeEnv: 'production'
+      })
+      fetch.mockResolvedValue(
+        makeResponse({ json: { totalItems: 0, member: [] } })
       )
+
+      await fetchAlerts()
+
+      const [, options] = fetch.mock.calls[0]
+      expect('dispatcher' in options).toBe(false)
     })
 
     it('does NOT call the real Ricardo alerts endpoint when useMock is true', async () => {
@@ -314,16 +329,31 @@ describe('ricardoApiClient', () => {
 
     it('calls the WireMock stub URL when useMock is true and returns its response', async () => {
       const wiremockResponse = { totalItems: 2, member: [{ id: 1 }, { id: 2 }] }
-      const { fetchDaqiAlerts, fetch } = await setup({ useMock: true })
+      const { fetchDaqiAlerts, fetch, Agent } = await setup({ useMock: true })
       fetch.mockResolvedValue(makeResponse({ json: wiremockResponse }))
 
       const data = await fetchDaqiAlerts()
 
       expect(data).toEqual(wiremockResponse)
-      expect(fetch).toHaveBeenCalledWith(
-        'https://wiremock.test/daqi_alerts',
-        expect.objectContaining({ signal: expect.any(Object) })
+      const [url, options] = fetch.mock.calls[0]
+      expect(url).toBe('https://wiremock.test/daqi_alerts')
+      expect(options).toMatchObject({ signal: expect.any(Object) })
+      expect(options.dispatcher).toBeInstanceOf(Agent)
+    })
+
+    it('does not attach a dispatcher to the WireMock DAQI call in production without a proxy', async () => {
+      const { fetchDaqiAlerts, fetch } = await setup({
+        useMock: true,
+        nodeEnv: 'production'
+      })
+      fetch.mockResolvedValue(
+        makeResponse({ json: { totalItems: 0, member: [] } })
       )
+
+      await fetchDaqiAlerts()
+
+      const [, options] = fetch.mock.calls[0]
+      expect('dispatcher' in options).toBe(false)
     })
 
     it('throws when useMock is true and the WireMock stub returns a non-ok response', async () => {

@@ -18,7 +18,8 @@ import {
   stopSiteCache
 } from './users/utils/ricardoSiteAndRegionCache.js'
 import { addLastUpdatedFromRicardoToState } from './migrations/addLastUpdatedFromRicardoToState.js'
-import { migratePollutantStateToEventModel } from './migrations/migratePollutantStateToEventModel.js'
+import { addAlertStartedTimestampToState } from './migrations/addAlertStartedTimestampToState.js'
+//import { migratePollutantStateToEventModel } from './migrations/migratePollutantStateToEventModel.js'
 
 async function createServer() {
   setupProxy()
@@ -73,7 +74,8 @@ async function createServer() {
   server.ext('onPreStart', async () => {
     await initSiteCache()
     await addLastUpdatedFromRicardoToState(server.db)
-    await migratePollutantStateToEventModel(server.db)
+    await addAlertStartedTimestampToState(server.db)
+    //await migratePollutantStateToEventModel(server.db)
   })
 
   server.ext('onPreStop', () => {

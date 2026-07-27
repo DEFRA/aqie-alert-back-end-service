@@ -142,9 +142,14 @@ async function fetchAqsrFromWireMock() {
   logger.info(
     `[MOCK] Fetching AQSR alerts from WireMock ${JSON.stringify({ url: WIREMOCK_AQSR_URL })}`
   )
-  const response = await fetch(WIREMOCK_AQSR_URL, {
+  const dispatcher = getRicardoDispatcher()
+  const fetchOptions = {
     signal: AbortSignal.timeout(RICARDO_REQUEST_TIMEOUT_MS)
-  })
+  }
+  if (dispatcher) {
+    fetchOptions.dispatcher = dispatcher
+  }
+  const response = await fetch(WIREMOCK_AQSR_URL, fetchOptions)
   if (!response.ok) {
     throw new Error(`WireMock AQSR stub returned ${response.status}`)
   }
@@ -189,9 +194,14 @@ async function fetchDaqiFromWireMock() {
   logger.info(
     `[MOCK] Fetching DAQI alerts from WireMock ${JSON.stringify({ url: WIREMOCK_DAQI_URL })}`
   )
-  const response = await fetch(WIREMOCK_DAQI_URL, {
+  const dispatcher = getRicardoDispatcher()
+  const fetchOptions = {
     signal: AbortSignal.timeout(RICARDO_REQUEST_TIMEOUT_MS)
-  })
+  }
+  if (dispatcher) {
+    fetchOptions.dispatcher = dispatcher
+  }
+  const response = await fetch(WIREMOCK_DAQI_URL, fetchOptions)
   if (!response.ok) {
     throw new Error(`WireMock DAQI stub returned ${response.status}`)
   }
