@@ -51,9 +51,19 @@ async function createIndexes(db) {
       { unique: true, name: 'user_contact_unique' }
     )
 
+  // Pollutant alert dedup key: compound (alert-id + alert-started-timestamp),
+  // where alert-id holds the samplingPointId value. Each beyond-24h breach
+  // event for a samplingPointId gets its own document (new alert-started-timestamp);
+  // the unique constraint prevents duplicate inserts within an event window.
+  // Replaces the old single-column unique index on alert-id (dropped by
+  // migratePollutantStateToEventModel). Building this on legacy docs is safe:
+  // their alert-ids are unique, so the (alert-id, null) keys never collide.
   await db
     .collection('pollutant-alert-processing-state')
-    .createIndex({ 'alert-id': 1 }, { unique: true })
+    .createIndex(
+      { 'alert-id': 1, 'alert-started-timestamp': 1 },
+      { unique: true, name: 'alertId_alertStarted_unique' }
+    )
 
   await db.collection('pollutant-alerts-audit').createIndex({ 'alert-id': 1 })
 

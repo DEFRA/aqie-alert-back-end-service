@@ -2,18 +2,20 @@ import { fetchAlerts } from './ricardoApiClient.js'
 import { sendNotification } from './notifyServiceClient.js'
 import { getRegionForSite } from './ricardoSiteAndRegionCache.js'
 import { formatLocationForUrl } from './locationUtils.js'
+import { isWithinLast24Hours, TWENTY_FOUR_HOURS_MS } from './dateRangeUtils.js'
 import {
-  collapseInCycleDuplicates,
   ensureCacheReadyForCycle,
   getMatchingUsers,
   sendNotificationsToUsers
 } from './alertCycleUtils.js'
+import { deduplicateAlertsOldestFirst } from './alertDedupUtils.js'
 import { config } from '../../config.js'
 import { createLogger } from '../../common/helpers/logging/logger.js'
 import { DB_ERROR_CODE } from './constants.js'
 
 const logger = createLogger()
 const POLLUTANT_ALERT_STATUS_COLLECTION = 'pollutant-alert-processing-state'
+const POLLUTANT_ALERTS_AUDIT_COLLECTION = 'pollutant-alerts-audit'
 
 function cleanPollutantName(pollutant) {
   return pollutant.replaceAll(/<[^>]{0,200}>/g, '')
@@ -38,6 +40,44 @@ function formatPollutantName(pollutant) {
   return name ? `${name} (${code})` : cleaned
 }
 
+/**
+ * Audit-side key: identifies a SPECIFIC Ricardo emission so each
+ * `pollutant-alerts-audit` row traces back to the exact reading that triggered
+ * it. Includes `date` so two readings of the same physical breach (a repeat
+ * after a >24h gap) produce distinct audit identifiers and therefore distinct
+ * audit rows. Unlike DAQI we do not embed siteId — the pollutant audit does not
+ * carry it, and samplingPointId already maps to a single site.
+ */
+function buildAuditKey(member) {
+  return `${member.samplingPointId}-${member.date}`
+}
+
+/**
+ * MongoDB query shape for a NEW event row in `pollutant-alert-processing-state`.
+ * Compound key: alert-id (holds samplingPointId) + alert-started-timestamp.
+ * Each continuous breach event produces one document. A beyond-24h gap produces
+ * a new document (different alert-started-timestamp). The collection has a
+ * unique index on `{ 'alert-id': 1, 'alert-started-timestamp': 1 }`.
+ */
+function buildNewEventStateQuery(alertDetail) {
+  return {
+    'alert-id': alertDetail.samplingPointId,
+    'alert-started-timestamp': alertDetail.date
+  }
+}
+
+/**
+ * MongoDB query shape for updating an EXISTING event row. Uses the
+ * alert-started-timestamp from the existing state row so the update targets the
+ * correct document for the current event window — not the incoming alert date.
+ */
+function buildExistingEventStateQuery(samplingPointId, alertStartedTimestamp) {
+  return {
+    'alert-id': samplingPointId,
+    'alert-started-timestamp': alertStartedTimestamp
+  }
+}
+
 function filterValidAlerts(members) {
   // Note: Ricardo's own `region` field is deliberately NOT carried through.
   // Region is always resolved from siteId via the GeoJSON-backed site cache in
@@ -48,44 +88,106 @@ function filterValidAlerts(members) {
     .filter(
       (item) =>
         item.validationStatus === 2 &&
-        (item.alertLevel === true || item.informationLevel === true)
+        (item.alertLevel === true || item.informationLevel === true) &&
+        item.samplingPointId !== undefined &&
+        item.siteId &&
+        item.date &&
+        isWithinLast24Hours(item.date)
     )
     .map((item) => ({
-      'alert-id': item.samplingPointId,
+      samplingPointId: item.samplingPointId,
+      'alert-id': buildAuditKey(item),
       siteId: item.siteId,
+      date: item.date,
       pollutant: item.pollutant,
-      alertText: item.alertText,
       concentration: item.concentration,
       alertThreshold: item.alertThreshold
     }))
 }
 
-async function getAlreadyProcessedAlertIds(db) {
-  const existing = await db
+/**
+ * Bulk-loads the most recent state row per samplingPointId (stored under
+ * `alert-id`) for all candidates. Sorted by alert-started-timestamp descending
+ * so that when multiple event rows exist for the same samplingPointId (each
+ * beyond-24h gap creates a new row), the first map.set wins — giving us the
+ * latest event row for each id.
+ * @returns {Promise<Map<number, object>>}
+ */
+async function loadRecentStateRowsByAlertId(db, candidates) {
+  if (candidates.length === 0) {
+    return new Map()
+  }
+  const alertIds = candidates.map((c) => c.samplingPointId)
+  const rows = await db
     .collection(POLLUTANT_ALERT_STATUS_COLLECTION)
-    .find({ status: { $in: ['in-progress', 'processed'] } })
-    .project({ 'alert-id': 1 })
+    .find({ 'alert-id': { $in: alertIds } })
+    .sort({ 'alert-started-timestamp': -1 })
     .toArray()
-  return new Set(existing.map((doc) => doc['alert-id']))
+  const map = new Map()
+  for (const row of rows) {
+    if (!map.has(row['alert-id'])) {
+      map.set(row['alert-id'], row)
+    }
+  }
+  return map
 }
 
 async function markAlertInProgress(db, alertDetail) {
+  // New event row: compound key (alert-id + alert-started-timestamp).
+  // Beyond-24h gap → different alert-started-timestamp → new document inserted.
+  // Within-24h repeat is routed to updateStateForExistingAlert, not here.
   await db.collection(POLLUTANT_ALERT_STATUS_COLLECTION).updateOne(
-    { 'alert-id': alertDetail['alert-id'] },
+    buildNewEventStateQuery(alertDetail),
     {
       $set: {
-        'alert-id': alertDetail['alert-id'],
+        'alert-id': alertDetail.samplingPointId,
         region: alertDetail.region,
         pollutant: alertDetail.pollutant,
-        alertText: alertDetail.alertText,
         concentration: alertDetail.concentration,
         alertThreshold: alertDetail.alertThreshold,
+        lastUpdatedFromRicardo: alertDetail.date,
         status: 'in-progress',
-        createdAt: new Date()
-      }
+        'alert-started-timestamp': alertDetail.date
+      },
+      $setOnInsert: { createdAt: new Date() }
     },
     { upsert: true }
   )
+}
+
+async function markAlertProcessed(db, alertDetail) {
+  await db
+    .collection(POLLUTANT_ALERT_STATUS_COLLECTION)
+    .updateOne(buildNewEventStateQuery(alertDetail), {
+      $set: {
+        status: 'processed',
+        processedAt: new Date()
+      }
+    })
+}
+
+/**
+ * Bumps `lastUpdatedFromRicardo` (and last-seen `concentration`) for a combo
+ * whose users were already notified within the 24h window. No notification is
+ * sent and no audit row is written — the row is just kept current for
+ * traceability. Uses the existing row's alert-started-timestamp to target the
+ * correct event document, not the incoming alert date.
+ */
+async function updateStateForExistingAlert(db, alertDetail, existingRow) {
+  await db
+    .collection(POLLUTANT_ALERT_STATUS_COLLECTION)
+    .updateOne(
+      buildExistingEventStateQuery(
+        alertDetail.samplingPointId,
+        existingRow['alert-started-timestamp']
+      ),
+      {
+        $set: {
+          lastUpdatedFromRicardo: alertDetail.date,
+          concentration: alertDetail.concentration
+        }
+      }
+    )
 }
 
 async function insertPollutantAuditEntry(db, alertDetail, userMatch) {
@@ -102,7 +204,7 @@ async function insertPollutantAuditEntry(db, alertDetail, userMatch) {
     timestamp: new Date()
   }
   try {
-    await db.collection('pollutant-alerts-audit').insertOne(entry)
+    await db.collection(POLLUTANT_ALERTS_AUDIT_COLLECTION).insertOne(entry)
   } catch (err) {
     if (err.code === DB_ERROR_CODE) {
       logger.warn(
@@ -122,7 +224,7 @@ async function updatePollutantAuditEntry(
   location,
   notificationId
 ) {
-  await db.collection('pollutant-alerts-audit').updateOne(
+  await db.collection(POLLUTANT_ALERTS_AUDIT_COLLECTION).updateOne(
     {
       'alert-id': alertId,
       user_contact: userContact,
@@ -133,18 +235,6 @@ async function updatePollutantAuditEntry(
       $set: {
         'pollutant-alert-status': 'processed',
         notificationId
-      }
-    }
-  )
-}
-
-async function markAlertProcessed(db, alertId) {
-  await db.collection(POLLUTANT_ALERT_STATUS_COLLECTION).updateOne(
-    { 'alert-id': alertId },
-    {
-      $set: {
-        status: 'processed',
-        processedAt: new Date()
       }
     }
   )
@@ -237,7 +327,7 @@ async function processAlertForUsers(db, alertDetail) {
     })
 
     if (allSent) {
-      await markAlertProcessed(db, resolvedDetail['alert-id'])
+      await markAlertProcessed(db, resolvedDetail)
       logger.info(
         `[Pollutant] Alert ${resolvedDetail['alert-id']} marked as processed`
       )
@@ -260,6 +350,38 @@ async function fetchPollutantAlertsForCycle() {
   }
 }
 
+/**
+ * Classifies one alert against its (optional) existing state row.
+ *
+ * Business rule: the 24h dedup window is anchored to `lastUpdatedFromRicardo`
+ * (the last Ricardo reading we recorded for this combo). As long as we keep
+ * seeing this samplingPointId in Ricardo's response at least every 24h, we
+ * treat it as one continuous event and don't re-notify. If Ricardo goes quiet
+ * for >24h and the breach then reappears, that's a fresh event → notify again.
+ *
+ *   'skip-stuck'  — a prior cycle marked the combo in-progress and never
+ *                   finished (the mongo-lock guarantees serial cycles, so a
+ *                   leftover 'in-progress' at cycle start means it crashed).
+ *   'update-only' — the combo was last seen by Ricardo within 24h; bump
+ *                   lastUpdatedFromRicardo, do not re-notify.
+ *   'new'         — no row, OR Ricardo hasn't confirmed this combo for >24h.
+ */
+function classifyAlert(existingRow, now) {
+  if (!existingRow) {
+    return 'new'
+  }
+  if (existingRow.status === 'in-progress') {
+    return 'skip-stuck'
+  }
+  const lastUpdatedMs = existingRow.lastUpdatedFromRicardo
+    ? new Date(existingRow.lastUpdatedFromRicardo).getTime()
+    : 0
+  if (now - lastUpdatedMs <= TWENTY_FOUR_HOURS_MS) {
+    return 'update-only'
+  }
+  return 'new'
+}
+
 export async function processPollutantAlerts(db) {
   logger.info('[Pollutant] Starting pollutant alert processing cycle')
 
@@ -280,32 +402,68 @@ export async function processPollutantAlerts(db) {
   )
   if (validAlerts.length === 0) {
     logger.info(
-      '[Pollutant] No alerts matching alertLevel=true and validationStatus=2'
+      '[Pollutant] No alerts matching alertLevel/informationLevel=true, validationStatus=2 and within 24h'
     )
     return
   }
 
-  const processedIds = await getAlreadyProcessedAlertIds(db)
-  const newAlerts = validAlerts.filter(
-    (alert) => !processedIds.has(alert['alert-id'])
+  // Collapse rows in this response that share the same samplingPointId.
+  // Cron-job rule: oldest timestamp wins (breach-started time), highest
+  // concentration as tie-breaker when timestamps are equal. This ensures the
+  // notification reflects when the breach first occurred, not Ricardo's latest
+  // refresh, and the most severe reading in a tie.
+  const uniqueCandidates = deduplicateAlertsOldestFirst(
+    validAlerts,
+    'concentration'
   )
-  const uniqueNewAlerts = collapseInCycleDuplicates(newAlerts)
-
   logger.info(
-    `[Pollutant] ${uniqueNewAlerts.length} unique alerts to process (${newAlerts.length - uniqueNewAlerts.length} duplicate rows collapsed, ${processedIds.size} already processed in prior cycles)`
+    `[Pollutant] ${uniqueCandidates.length} unique candidate alerts (${validAlerts.length - uniqueCandidates.length} in-cycle duplicates collapsed by samplingPointId)`
   )
-  if (uniqueNewAlerts.length === 0) {
-    return
-  }
 
   if (!(await ensureCacheReadyForCycle('[Pollutant]'))) {
     return
   }
 
-  for (const alertDetail of uniqueNewAlerts) {
+  // One bulk read for all candidate samplingPointIds, then classify each.
+  const stateByAlertId = await loadRecentStateRowsByAlertId(
+    db,
+    uniqueCandidates
+  )
+  const now = Date.now()
+  const counts = { new: 0, 'update-only': 0, 'skip-stuck': 0 }
+
+  for (const alertDetail of uniqueCandidates) {
+    const existing = stateByAlertId.get(alertDetail.samplingPointId)
+    const verdict = classifyAlert(existing, now)
+    counts[verdict]++
+
+    if (verdict === 'skip-stuck') {
+      logger.info(
+        `[Pollutant] Skipping samplingPointId ${alertDetail.samplingPointId}: prior cycle left it in-progress (likely crashed mid-process — manual review needed)`
+      )
+      continue
+    }
+
+    if (verdict === 'update-only') {
+      await updateStateForExistingAlert(db, alertDetail, existing)
+      logger.info(
+        `[Pollutant] Update-only for samplingPointId ${alertDetail.samplingPointId} (last Ricardo reading at ${existing.lastUpdatedFromRicardo}, within 24h)`
+      )
+      continue
+    }
+
+    // verdict === 'new'
     await processAlertForUsers(db, alertDetail)
   }
 
+  logger.info(
+    `[Pollutant] Cycle summary ${JSON.stringify({
+      candidates: uniqueCandidates.length,
+      new: counts.new,
+      updateOnly: counts['update-only'],
+      skipStuck: counts['skip-stuck']
+    })}`
+  )
   logger.info('[Pollutant] Pollutant alert processing cycle completed')
 }
 
@@ -314,8 +472,10 @@ export {
   getMatchingUsers,
   cleanPollutantName,
   formatPollutantName,
-  getAlreadyProcessedAlertIds,
   markAlertInProgress,
   markAlertProcessed,
-  sendAlertToUser
+  updateStateForExistingAlert,
+  sendAlertToUser,
+  classifyAlert,
+  buildAuditKey
 }
