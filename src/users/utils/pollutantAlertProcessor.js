@@ -78,6 +78,10 @@ function buildExistingEventStateQuery(samplingPointId, alertStartedTimestamp) {
   }
 }
 
+function isAlertOrInformationLevel(item) {
+  return item.alertLevel === true || item.informationLevel === true
+}
+
 function filterValidAlerts(members) {
   // Note: Ricardo's own `region` field is deliberately NOT carried through.
   // Region is always resolved from siteId via the GeoJSON-backed site cache in
@@ -88,7 +92,7 @@ function filterValidAlerts(members) {
     .filter(
       (item) =>
         item.validationStatus === 2 &&
-        (item.alertLevel === true || item.informationLevel === true) &&
+        isAlertOrInformationLevel(item) &&
         item.samplingPointId !== undefined &&
         item.siteId &&
         item.date &&
@@ -433,6 +437,36 @@ function classifyAlert(existingRow, now) {
   return 'new'
 }
 
+function enrichAlertWithLatestReading(
+  alertDetail,
+  latestReadingBySamplingPointId
+) {
+  const latestReading = latestReadingBySamplingPointId.get(
+    alertDetail.samplingPointId
+  )
+  return {
+    ...alertDetail,
+    latestRicardoDate: latestReading?.date ?? alertDetail.date,
+    latestRicardoConcentration:
+      latestReading?.concentration ?? alertDetail.concentration
+  }
+}
+
+async function dispatchAlert(db, enrichedDetail, existing, verdict) {
+  if (verdict === 'skip-stuck') {
+    logger.info(
+      `[Pollutant] Skipping samplingPointId ${enrichedDetail.samplingPointId}: prior cycle left it in-progress (likely crashed mid-process — manual review needed)`
+    )
+  } else if (verdict === 'update-only') {
+    await updateStateForExistingAlert(db, enrichedDetail, existing)
+    logger.info(
+      `[Pollutant] Update-only for samplingPointId ${enrichedDetail.samplingPointId} (last Ricardo reading at ${existing.lastUpdatedFromRicardo}, within 24h)`
+    )
+  } else {
+    await processAlertForUsers(db, enrichedDetail)
+  }
+}
+
 export async function processPollutantAlerts(db) {
   logger.info('[Pollutant] Starting pollutant alert processing cycle')
 
@@ -493,36 +527,14 @@ export async function processPollutantAlerts(db) {
     // Attach the latest Ricardo date and concentration for this samplingPointId
     // so that markAlertInProgress / updateStateForExistingAlert store the most
     // recent reading's values rather than the (potentially older) dedup values.
-    const latestReading = latestReadingBySamplingPointId.get(
-      alertDetail.samplingPointId
+    const enrichedDetail = enrichAlertWithLatestReading(
+      alertDetail,
+      latestReadingBySamplingPointId
     )
-    const enrichedDetail = {
-      ...alertDetail,
-      latestRicardoDate: latestReading?.date ?? alertDetail.date,
-      latestRicardoConcentration:
-        latestReading?.concentration ?? alertDetail.concentration
-    }
     const existing = stateByAlertId.get(alertDetail.samplingPointId)
     const verdict = classifyAlert(existing, now)
     counts[verdict]++
-
-    if (verdict === 'skip-stuck') {
-      logger.info(
-        `[Pollutant] Skipping samplingPointId ${alertDetail.samplingPointId}: prior cycle left it in-progress (likely crashed mid-process — manual review needed)`
-      )
-      continue
-    }
-
-    if (verdict === 'update-only') {
-      await updateStateForExistingAlert(db, enrichedDetail, existing)
-      logger.info(
-        `[Pollutant] Update-only for samplingPointId ${alertDetail.samplingPointId} (last Ricardo reading at ${existing.lastUpdatedFromRicardo}, within 24h)`
-      )
-      continue
-    }
-
-    // verdict === 'new'
-    await processAlertForUsers(db, enrichedDetail)
+    await dispatchAlert(db, enrichedDetail, existing, verdict)
   }
 
   logger.info(
