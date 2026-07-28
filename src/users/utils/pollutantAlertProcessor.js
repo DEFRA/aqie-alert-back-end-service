@@ -135,13 +135,13 @@ async function loadRecentStateRowsByAlertId(db, candidates) {
 async function markAlertInProgress(db, alertDetail) {
   // New event row: compound key (alert-id + alert-started-timestamp).
   // Beyond-24h gap → different alert-started-timestamp → new document inserted.
-  // Within-24h repeat is routed to updateStateForExistingAlert, not here.
+  // Within-24h repeat → same compound key → existing document updated in-place.
   //
-  // IMPORTANT: lastUpdatedFromRicardo is set to the current wall-clock time
-  // (not alertDetail.date) so the 24h dedup window in classifyAlert is anchored
-  // to when our cron *last processed* this alert, not Ricardo's historical event
-  // date. Using alertDetail.date would cause the 24h check to always exceed the
-  // window for old/historical Ricardo data, re-notifying on every cron cycle.
+  // lastUpdatedFromRicardo is set to alertDetail.date (Ricardo's event timestamp),
+  // matching the DAQI cron pattern. The 24h dedup window in classifyAlert compares
+  // Date.now() against this value — as long as Ricardo keeps returning this
+  // samplingPointId within a 24h rolling window, the breach is treated as one
+  // continuous event and users are not re-notified.
   await db.collection(POLLUTANT_ALERT_STATUS_COLLECTION).updateOne(
     buildNewEventStateQuery(alertDetail),
     {
@@ -152,7 +152,7 @@ async function markAlertInProgress(db, alertDetail) {
         pollutant: alertDetail.pollutant,
         concentration: alertDetail.concentration,
         alertThreshold: alertDetail.alertThreshold,
-        lastUpdatedFromRicardo: new Date().toISOString(),
+        lastUpdatedFromRicardo: alertDetail.date,
         status: 'in-progress',
         'alert-started-timestamp': alertDetail.date
       },
@@ -180,8 +180,9 @@ async function markAlertProcessed(db, alertDetail) {
  * traceability. Uses the existing row's alert-started-timestamp to target the
  * correct event document, not the incoming alert date.
  *
- * lastUpdatedFromRicardo is set to the current wall-clock time so the next
- * classifyAlert call correctly measures elapsed time since last processing.
+ * lastUpdatedFromRicardo is set to alertDetail.date (Ricardo's event timestamp),
+ * matching the DAQI cron pattern, so the 24h dedup window stays anchored to
+ * the breach event time reported by Ricardo.
  */
 async function updateStateForExistingAlert(db, alertDetail, existingRow) {
   await db
@@ -193,7 +194,7 @@ async function updateStateForExistingAlert(db, alertDetail, existingRow) {
       ),
       {
         $set: {
-          lastUpdatedFromRicardo: new Date().toISOString(),
+          lastUpdatedFromRicardo: alertDetail.date,
           concentration: alertDetail.concentration
         }
       }
