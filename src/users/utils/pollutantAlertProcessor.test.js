@@ -5,6 +5,7 @@ import {
   cleanPollutantName,
   formatPollutantName,
   buildAuditKey,
+  buildLatestReadingMap,
   sendAlertToUser,
   processPollutantAlerts
 } from './pollutantAlertProcessor.js'
@@ -195,6 +196,48 @@ describe('pollutantAlertProcessor', () => {
         date: '2025-12-04T02:00:00+01:00'
       }
       expect(filterValidAlerts([stale])).toHaveLength(0)
+    })
+  })
+
+  describe('buildLatestReadingMap', () => {
+    it('returns the single reading when only one alert per samplingPointId', () => {
+      const result = buildLatestReadingMap([sampleMember])
+      expect(result.get(500)).toEqual({ date: SAMPLE_DATE, concentration: 180 })
+    })
+
+    it('returns the newest reading when multiple readings for the same samplingPointId', () => {
+      const olderDate = new Date(Date.now() - 7 * 60 * 60 * 1000).toISOString()
+      const newerDate = new Date(Date.now() - 1 * 60 * 60 * 1000).toISOString()
+      const result = buildLatestReadingMap([
+        { ...sampleMember, date: olderDate, concentration: 150 },
+        { ...sampleMember, date: newerDate, concentration: 199 }
+      ])
+      expect(result.get(500)).toEqual({ date: newerDate, concentration: 199 })
+    })
+
+    it('handles multiple distinct samplingPointIds independently', () => {
+      const date1 = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString()
+      const date2 = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString()
+      const result = buildLatestReadingMap([
+        {
+          ...sampleMember,
+          samplingPointId: 100,
+          date: date1,
+          concentration: 120
+        },
+        {
+          ...sampleMember,
+          samplingPointId: 200,
+          date: date2,
+          concentration: 230
+        }
+      ])
+      expect(result.get(100)).toEqual({ date: date1, concentration: 120 })
+      expect(result.get(200)).toEqual({ date: date2, concentration: 230 })
+    })
+
+    it('returns an empty map for an empty input', () => {
+      expect(buildLatestReadingMap([])).toEqual(new Map())
     })
   })
 
@@ -416,8 +459,6 @@ describe('pollutantAlertProcessor', () => {
         },
         { upsert: true }
       )
-
-      // audit row carries the composite (per-emission) alert-id
       expect(db._audit.insertOne).toHaveBeenCalledWith(
         expect.objectContaining({
           'alert-id': `500-${SAMPLE_DATE}`,
@@ -483,6 +524,55 @@ describe('pollutantAlertProcessor', () => {
       )
     })
 
+    it('update-only: advances lastUpdatedFromRicardo to the newest Ricardo reading when multiple readings arrive for the same samplingPointId', async () => {
+      // Ricardo returns 2 readings for the same samplingPointId 500:
+      //   SAMPLE_DATE (~60 min ago)  — oldest → kept by dedup as alert-started-timestamp
+      //   newerDate   (~30 min ago)  — newest → discarded from dedup but captured by buildLatestDateMap
+      //
+      // The state row (fiveHoursAgo lastUpdatedFromRicardo) marks this as update-only.
+      // updateStateForExistingAlert should set lastUpdatedFromRicardo = newerDate,
+      // NOT SAMPLE_DATE — so the 24h window is anchored to the latest Ricardo confirmation.
+      const db = makeDb()
+      const fiveHoursAgo = new Date(
+        Date.now() - 5 * 60 * 60 * 1000
+      ).toISOString()
+      const newerDate = new Date(Date.now() - 30 * 60 * 1000).toISOString()
+      db._state.find.mockReturnValueOnce({
+        sort: vi.fn(function () {
+          return this
+        }),
+        toArray: vi.fn().mockResolvedValue([
+          {
+            'alert-id': 500,
+            status: 'processed',
+            'alert-started-timestamp': fiveHoursAgo,
+            lastUpdatedFromRicardo: fiveHoursAgo
+          }
+        ])
+      })
+      fetchAlerts.mockResolvedValueOnce({
+        member: [
+          sampleMember, // SAMPLE_DATE (~60 min ago) concentration 180 — oldest
+          { ...sampleMember, date: newerDate, concentration: 199 } // newer reading
+        ]
+      })
+
+      await processPollutantAlerts(db)
+
+      expect(sendNotification).not.toHaveBeenCalled()
+      // lastUpdatedFromRicardo should be the NEWEST reading's date, not SAMPLE_DATE
+      // concentration should be the NEWEST reading's concentration (199), not oldest (180)
+      expect(db._state.updateOne).toHaveBeenCalledWith(
+        { 'alert-id': 500, 'alert-started-timestamp': fiveHoursAgo },
+        {
+          $set: {
+            lastUpdatedFromRicardo: newerDate,
+            concentration: 199
+          }
+        }
+      )
+    })
+
     it('re-notifies when the combo has been quiet for more than 24h', async () => {
       const db = makeDb()
       const twentyFiveHoursAgo = new Date(
@@ -533,9 +623,9 @@ describe('pollutantAlertProcessor', () => {
       const t3 = new Date(Date.now() - 40 * 60 * 1000).toISOString()
       fetchAlerts.mockResolvedValueOnce({
         member: [
-          sampleMember, // ~60 min ago, concentration 180 — oldest → wins
+          sampleMember, // ~60 min ago, concentration 180 — oldest → alert-started-timestamp
           { ...sampleMember, date: t2, concentration: 185 },
-          { ...sampleMember, date: t3, concentration: 182 }
+          { ...sampleMember, date: t3, concentration: 182 } // newest → lastUpdatedFromRicardo + concentration
         ]
       })
       sendNotification.mockResolvedValue({ notificationId: 'notif-x' })
@@ -543,18 +633,21 @@ describe('pollutantAlertProcessor', () => {
       await processPollutantAlerts(db)
 
       expect(sendNotification).toHaveBeenCalledTimes(1)
-      // oldest reading (SAMPLE_DATE, concentration 180) is carried through
+      // alert-started-timestamp = oldest (SAMPLE_DATE)
+      // lastUpdatedFromRicardo  = newest (t3)
+      // concentration in state  = newest (182)
       expect(db._state.updateOne).toHaveBeenCalledWith(
         { 'alert-id': 500, 'alert-started-timestamp': SAMPLE_DATE },
         expect.objectContaining({
           $set: expect.objectContaining({
             'alert-started-timestamp': SAMPLE_DATE,
-            concentration: 180,
-            lastUpdatedFromRicardo: SAMPLE_DATE
+            concentration: 182,
+            lastUpdatedFromRicardo: t3
           })
         }),
         { upsert: true }
       )
+      // Notification personalisation still uses oldest (breach-start) concentration
       const concentrationsSent = sendNotification.mock.calls.map(
         (call) => call[0].personalisation.concentration
       )

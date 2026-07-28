@@ -106,6 +106,42 @@ function filterValidAlerts(members) {
 }
 
 /**
+ * Builds a map of samplingPointId → { date, concentration } for the NEWEST
+ * reading from the full (pre-dedup) valid alert list.
+ *
+ * `deduplicateAlertsOldestFirst` keeps the OLDEST reading per samplingPointId
+ * so that `alert-started-timestamp` reflects when the breach first occurred.
+ * However that means the NEWER readings (updated concentrations / timestamps
+ * from the same breach event) are discarded.
+ *
+ * We capture the latest date AND concentration here — separately — so that
+ * `lastUpdatedFromRicardo` and the stored `concentration` always reflect
+ * Ricardo's most recent measurement, not the breach-start reading.
+ *
+ * Example: Ricardo returns samplingPointId 2211 at 08:00 (189 µg/m³) and
+ *          15:00 (199 µg/m³):
+ *   alert-started-timestamp  = 08:00  (oldest — breach start)
+ *   lastUpdatedFromRicardo   = 15:00  (newest — latest confirmation)
+ *   concentration (state)    = 199    (newest — current severity)
+ *
+ * @param {object[]} alerts - The already-filtered valid alert list (pre-dedup)
+ * @returns {Map<number, {date: string, concentration: number}>}
+ */
+export function buildLatestReadingMap(alerts) {
+  const map = new Map()
+  for (const alert of alerts) {
+    const existing = map.get(alert.samplingPointId)
+    if (!existing || new Date(alert.date) > new Date(existing.date)) {
+      map.set(alert.samplingPointId, {
+        date: alert.date,
+        concentration: alert.concentration
+      })
+    }
+  }
+  return map
+}
+
+/**
  * Bulk-loads the most recent state row per samplingPointId (stored under
  * `alert-id`) for all candidates. Sorted by alert-started-timestamp descending
  * so that when multiple event rows exist for the same samplingPointId (each
@@ -150,9 +186,11 @@ async function markAlertInProgress(db, alertDetail) {
         siteId: alertDetail.siteId,
         region: alertDetail.region,
         pollutant: alertDetail.pollutant,
-        concentration: alertDetail.concentration,
+        concentration:
+          alertDetail.latestRicardoConcentration ?? alertDetail.concentration,
         alertThreshold: alertDetail.alertThreshold,
-        lastUpdatedFromRicardo: alertDetail.date,
+        lastUpdatedFromRicardo:
+          alertDetail.latestRicardoDate ?? alertDetail.date,
         status: 'in-progress',
         'alert-started-timestamp': alertDetail.date
       },
@@ -194,8 +232,10 @@ async function updateStateForExistingAlert(db, alertDetail, existingRow) {
       ),
       {
         $set: {
-          lastUpdatedFromRicardo: alertDetail.date,
-          concentration: alertDetail.concentration
+          lastUpdatedFromRicardo:
+            alertDetail.latestRicardoDate ?? alertDetail.date,
+          concentration:
+            alertDetail.latestRicardoConcentration ?? alertDetail.concentration
         }
       }
     )
@@ -418,6 +458,12 @@ export async function processPollutantAlerts(db) {
     return
   }
 
+  // Before dedup: snapshot the LATEST (newest) Ricardo date and concentration
+  // per samplingPointId. deduplicateAlertsOldestFirst keeps the oldest date as
+  // the breach-start anchor, but lastUpdatedFromRicardo and the stored
+  // concentration should reflect Ricardo's most recent measurement.
+  const latestReadingBySamplingPointId = buildLatestReadingMap(validAlerts)
+
   // Collapse rows in this response that share the same samplingPointId.
   // Cron-job rule: oldest timestamp wins (breach-started time), highest
   // concentration as tie-breaker when timestamps are equal. This ensures the
@@ -444,6 +490,18 @@ export async function processPollutantAlerts(db) {
   const counts = { new: 0, 'update-only': 0, 'skip-stuck': 0 }
 
   for (const alertDetail of uniqueCandidates) {
+    // Attach the latest Ricardo date and concentration for this samplingPointId
+    // so that markAlertInProgress / updateStateForExistingAlert store the most
+    // recent reading's values rather than the (potentially older) dedup values.
+    const latestReading = latestReadingBySamplingPointId.get(
+      alertDetail.samplingPointId
+    )
+    const enrichedDetail = {
+      ...alertDetail,
+      latestRicardoDate: latestReading?.date ?? alertDetail.date,
+      latestRicardoConcentration:
+        latestReading?.concentration ?? alertDetail.concentration
+    }
     const existing = stateByAlertId.get(alertDetail.samplingPointId)
     const verdict = classifyAlert(existing, now)
     counts[verdict]++
@@ -456,7 +514,7 @@ export async function processPollutantAlerts(db) {
     }
 
     if (verdict === 'update-only') {
-      await updateStateForExistingAlert(db, alertDetail, existing)
+      await updateStateForExistingAlert(db, enrichedDetail, existing)
       logger.info(
         `[Pollutant] Update-only for samplingPointId ${alertDetail.samplingPointId} (last Ricardo reading at ${existing.lastUpdatedFromRicardo}, within 24h)`
       )
@@ -464,7 +522,7 @@ export async function processPollutantAlerts(db) {
     }
 
     // verdict === 'new'
-    await processAlertForUsers(db, alertDetail)
+    await processAlertForUsers(db, enrichedDetail)
   }
 
   logger.info(
