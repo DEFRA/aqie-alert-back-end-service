@@ -203,6 +203,7 @@ describe('daqiAlertProcessor', () => {
           personalisation: expect.objectContaining({
             location: 'Cardiff',
             'daqi-level': 'high',
+            'daqi-level-title': 'High',
             checkAirQualityLink:
               'https://check-air-quality.service.gov.uk/location/cardiff?lang=en'
           })
@@ -234,6 +235,7 @@ describe('daqiAlertProcessor', () => {
           personalisation: expect.objectContaining({
             location: 'Cardiff',
             'daqi-level': 'high',
+            'daqi-level-title': 'High',
             checkAirQualityLink:
               'https://check-air-quality.service.gov.uk/location/cardiff?lang=cy',
             unsubscribeLink:
@@ -257,6 +259,7 @@ describe('daqiAlertProcessor', () => {
       )
       const [[payload]] = sendNotification.mock.calls
       expect(payload.personalisation['daqi-level']).toBe('very high')
+      expect(payload.personalisation['daqi-level-title']).toBe('Very high')
     })
 
     it('defaults lang to en when userMatch.lang is falsy', async () => {

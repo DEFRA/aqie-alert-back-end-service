@@ -69,6 +69,17 @@ function getDaqiLabel(daqiValue) {
   return daqiValue >= DAQI_VERY_HIGH_THRESHOLD ? 'very high' : 'high'
 }
 
+/**
+ * Returns a title-cased version of the daqi-level label for use in template
+ * subject lines and headings where the first word must be capitalised.
+ *   'high'      → 'High'
+ *   'very high' → 'Very high'
+ */
+function getDaqiLabelTitle(daqiValue) {
+  const label = getDaqiLabel(daqiValue)
+  return label.charAt(0).toUpperCase() + label.slice(1)
+}
+
 function filterValidDaqiAlerts(members, threshold) {
   // Note: Ricardo's own `region` field is deliberately NOT carried through.
   // Region is always resolved from siteId via the GeoJSON-backed site cache in
@@ -259,6 +270,7 @@ async function sendAlertToUser(userMatch, alertDetail) {
     personalisation: {
       location: userMatch.location,
       'daqi-level': getDaqiLabel(alertDetail.daqi),
+      'daqi-level-title': getDaqiLabelTitle(alertDetail.daqi),
       checkAirQualityLink
     }
   }

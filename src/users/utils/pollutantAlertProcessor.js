@@ -136,16 +136,23 @@ async function markAlertInProgress(db, alertDetail) {
   // New event row: compound key (alert-id + alert-started-timestamp).
   // Beyond-24h gap → different alert-started-timestamp → new document inserted.
   // Within-24h repeat is routed to updateStateForExistingAlert, not here.
+  //
+  // IMPORTANT: lastUpdatedFromRicardo is set to the current wall-clock time
+  // (not alertDetail.date) so the 24h dedup window in classifyAlert is anchored
+  // to when our cron *last processed* this alert, not Ricardo's historical event
+  // date. Using alertDetail.date would cause the 24h check to always exceed the
+  // window for old/historical Ricardo data, re-notifying on every cron cycle.
   await db.collection(POLLUTANT_ALERT_STATUS_COLLECTION).updateOne(
     buildNewEventStateQuery(alertDetail),
     {
       $set: {
         'alert-id': alertDetail.samplingPointId,
+        siteId: alertDetail.siteId,
         region: alertDetail.region,
         pollutant: alertDetail.pollutant,
         concentration: alertDetail.concentration,
         alertThreshold: alertDetail.alertThreshold,
-        lastUpdatedFromRicardo: alertDetail.date,
+        lastUpdatedFromRicardo: new Date().toISOString(),
         status: 'in-progress',
         'alert-started-timestamp': alertDetail.date
       },
@@ -172,6 +179,9 @@ async function markAlertProcessed(db, alertDetail) {
  * sent and no audit row is written — the row is just kept current for
  * traceability. Uses the existing row's alert-started-timestamp to target the
  * correct event document, not the incoming alert date.
+ *
+ * lastUpdatedFromRicardo is set to the current wall-clock time so the next
+ * classifyAlert call correctly measures elapsed time since last processing.
  */
 async function updateStateForExistingAlert(db, alertDetail, existingRow) {
   await db
@@ -183,7 +193,7 @@ async function updateStateForExistingAlert(db, alertDetail, existingRow) {
       ),
       {
         $set: {
-          lastUpdatedFromRicardo: alertDetail.date,
+          lastUpdatedFromRicardo: new Date().toISOString(),
           concentration: alertDetail.concentration
         }
       }

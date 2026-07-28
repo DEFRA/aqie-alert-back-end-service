@@ -403,11 +403,12 @@ describe('pollutantAlertProcessor', () => {
         {
           $set: {
             'alert-id': 500,
+            siteId: 'UKA00500',
             region: 'England',
             pollutant: 'O<sub>3</sub> (O3)',
             concentration: 180,
             alertThreshold: 150,
-            lastUpdatedFromRicardo: SAMPLE_DATE,
+            lastUpdatedFromRicardo: expect.any(String),
             status: 'in-progress',
             'alert-started-timestamp': SAMPLE_DATE
           },
@@ -475,7 +476,7 @@ describe('pollutantAlertProcessor', () => {
         { 'alert-id': 500, 'alert-started-timestamp': fiveHoursAgo },
         {
           $set: {
-            lastUpdatedFromRicardo: SAMPLE_DATE,
+            lastUpdatedFromRicardo: expect.any(String),
             concentration: 180
           }
         }
@@ -549,7 +550,7 @@ describe('pollutantAlertProcessor', () => {
           $set: expect.objectContaining({
             'alert-started-timestamp': SAMPLE_DATE,
             concentration: 180,
-            lastUpdatedFromRicardo: SAMPLE_DATE
+            lastUpdatedFromRicardo: expect.any(String)
           })
         }),
         { upsert: true }
