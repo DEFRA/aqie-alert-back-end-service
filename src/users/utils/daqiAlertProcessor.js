@@ -210,12 +210,14 @@ async function insertDaqiAuditEntry(db, alertDetail, userMatch) {
     await db.collection(DAQI_ALERTS_AUDIT_COLLECTION).insertOne(entry)
   } catch (err) {
     if (err.code === DB_ERROR_CODE) {
+      // Recipient already has an audit row for this alert-id (notified on an
+      // earlier cycle). Return false so the caller skips the duplicate re-send.
       logger.warn(
         `[DAQI] Duplicate audit entry skipped ${JSON.stringify({ 'alert-id': alertDetail['alert-id'], user_contact: userMatch.userContact, location: userMatch.location })}`
       )
-    } else {
-      throw err
+      return false
     }
+    throw err
   }
   return entry
 }

@@ -240,6 +240,46 @@ describe('alertCycleUtils', () => {
       expect(opts.updateAuditEntry).toHaveBeenCalledTimes(1)
     })
 
+    it('skips the send when the audit insert reports a duplicate', async () => {
+      const sendAlert = vi.fn().mockResolvedValue('notif-should-not-happen')
+      const user = {
+        userContact: '+447700000001',
+        alertType: 'sms',
+        location: 'Newcastle',
+        lang: 'en'
+      }
+      const opts = makeOpts([user], sendAlert)
+      // Audit row already exists for this recipient + alert-id.
+      opts.insertAuditEntry = vi.fn().mockResolvedValue(false)
+
+      const result = await sendNotificationsToUsers(opts)
+
+      // Already-notified is not a failure: allSent stays true so the alert can
+      // still be marked processed.
+      expect(result).toBe(true)
+      expect(sendAlert).not.toHaveBeenCalled()
+      expect(opts.updateAuditEntry).not.toHaveBeenCalled()
+    })
+
+    it('sends to fresh recipients but skips duplicates in the same batch', async () => {
+      const sendAlert = vi.fn().mockResolvedValue('notif-ok')
+      const users = [
+        { userContact: 'dup', alertType: 'sms', location: 'A', lang: 'en' },
+        { userContact: 'fresh', alertType: 'sms', location: 'B', lang: 'en' }
+      ]
+      const opts = makeOpts(users, sendAlert)
+      opts.insertAuditEntry = vi
+        .fn()
+        .mockResolvedValueOnce(false)
+        .mockResolvedValueOnce({ 'alert-id': 'test-id-123' })
+
+      const result = await sendNotificationsToUsers(opts)
+
+      expect(result).toBe(true)
+      expect(sendAlert).toHaveBeenCalledTimes(1)
+      expect(sendAlert).toHaveBeenCalledWith(users[1], opts.alertDetail)
+    })
+
     it('returns true when all users receive notification', async () => {
       const sendAlert = vi
         .fn()
