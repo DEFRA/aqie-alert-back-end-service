@@ -108,6 +108,42 @@ function filterValidDaqiAlerts(members, threshold) {
 }
 
 /**
+ * Builds a map of samplingPointId → { date, daqi } for the NEWEST reading from
+ * the full (pre-dedup) valid alert list.
+ *
+ * `deduplicateAlertsOldestFirst` keeps the OLDEST reading per samplingPointId so
+ * that `alert-started-timestamp` reflects when the breach first occurred. That
+ * discards the NEWER readings (updated daqi / timestamps from the same breach
+ * event).
+ *
+ * We capture the latest date AND daqi here — separately — so that
+ * `lastUpdatedFromRicardo` and the stored `daqi` always reflect Ricardo's most
+ * recent measurement, not the breach-start reading.
+ *
+ * Example: Ricardo returns samplingPointId 9091 at 16:10 (daqi 10) and later at
+ *          17:10 (daqi 9):
+ *   alert-started-timestamp  = 16:10  (oldest — breach start)
+ *   lastUpdatedFromRicardo   = 17:10  (newest — latest confirmation)
+ *   daqi (state)             = 9      (newest — current severity)
+ *
+ * @param {object[]} alerts - The already-filtered valid alert list (pre-dedup)
+ * @returns {Map<number, {date: string, daqi: number}>}
+ */
+export function buildLatestDaqiReadingMap(alerts) {
+  const map = new Map()
+  for (const alert of alerts) {
+    const existing = map.get(alert.samplingPointId)
+    if (!existing || new Date(alert.date) > new Date(existing.date)) {
+      map.set(alert.samplingPointId, {
+        date: alert.date,
+        daqi: alert.daqi
+      })
+    }
+  }
+  return map
+}
+
+/**
  * Bulk-loads the most recent state row per samplingPointId for all candidates.
  * Sorted by alert-started-timestamp descending so that when multiple event
  * rows exist for the same samplingPointId (each beyond-24h gap creates a new
@@ -137,6 +173,11 @@ async function markAlertInProgress(db, alertDetail) {
   // New event row: compound key (samplingPointId + alert-started-timestamp).
   // Beyond-24h gap → different alert-started-timestamp → new document inserted.
   // Within-24h repeat → same compound key → existing document updated.
+  //
+  // `alert-started-timestamp` uses alertDetail.date (the dedup OLDEST reading =
+  // breach start), while `daqi` and `lastUpdatedFromRicardo` use the latest
+  // reading captured pre-dedup so the state reflects Ricardo's most recent
+  // measurement.
   await db.collection(DAQI_ALERT_STATUS_COLLECTION).updateOne(
     buildNewEventStateQuery(alertDetail),
     {
@@ -144,9 +185,10 @@ async function markAlertInProgress(db, alertDetail) {
         samplingPointId: alertDetail.samplingPointId,
         siteId: alertDetail.siteId,
         pollutant: cleanPollutantName(alertDetail.pollutant),
-        daqi: alertDetail.daqi,
+        daqi: alertDetail.latestRicardoDaqi ?? alertDetail.daqi,
         region: alertDetail.region,
-        lastUpdatedFromRicardo: alertDetail.date,
+        lastUpdatedFromRicardo:
+          alertDetail.latestRicardoDate ?? alertDetail.date,
         'process-status': 'in-progress',
         'alert-started-timestamp': alertDetail.date
       }
@@ -171,6 +213,11 @@ async function markAlertProcessed(db, alertDetail) {
  * and no audit row is written — the row is just kept current for traceability.
  * Uses the existing row's alert-started-timestamp to target the correct
  * event document — not the incoming alert date.
+ *
+ * `lastUpdatedFromRicardo` and `daqi` are set from the latest reading captured
+ * pre-dedup (latestRicardoDate / latestRicardoDaqi). deduplicateAlertsOldestFirst
+ * keeps the OLDEST reading, so alertDetail.date / alertDetail.daqi would write the
+ * breach-start values back and leave the row unchanged when a newer reading exists.
  */
 async function updateStateForExistingAlert(db, alertDetail, existingRow) {
   await db
@@ -182,8 +229,9 @@ async function updateStateForExistingAlert(db, alertDetail, existingRow) {
       ),
       {
         $set: {
-          lastUpdatedFromRicardo: alertDetail.date,
-          daqi: alertDetail.daqi
+          lastUpdatedFromRicardo:
+            alertDetail.latestRicardoDate ?? alertDetail.date,
+          daqi: alertDetail.latestRicardoDaqi ?? alertDetail.daqi
         }
       }
     )
@@ -388,6 +436,26 @@ function classifyAlert(existingRow, now) {
   return 'new'
 }
 
+/**
+ * Attaches the latest Ricardo date and daqi (captured pre-dedup) to the alert
+ * so markAlertInProgress / updateStateForExistingAlert store the most recent
+ * reading rather than the (older) dedup breach-start values. Falls back to the
+ * dedup values when no latest reading is available.
+ */
+function enrichAlertWithLatestReading(
+  alertDetail,
+  latestReadingBySamplingPointId
+) {
+  const latestReading = latestReadingBySamplingPointId.get(
+    alertDetail.samplingPointId
+  )
+  return {
+    ...alertDetail,
+    latestRicardoDate: latestReading?.date ?? alertDetail.date,
+    latestRicardoDaqi: latestReading?.daqi ?? alertDetail.daqi
+  }
+}
+
 export async function processDaqiAlerts(db) {
   logger.info('[DAQI] Starting DAQI alert processing cycle')
 
@@ -411,6 +479,12 @@ export async function processDaqiAlerts(db) {
     return
   }
 
+  // Before dedup: snapshot the LATEST (newest) Ricardo date and daqi per
+  // samplingPointId. deduplicateAlertsOldestFirst keeps the oldest date as the
+  // breach-start anchor, but lastUpdatedFromRicardo and the stored daqi should
+  // reflect Ricardo's most recent measurement.
+  const latestReadingBySamplingPointId = buildLatestDaqiReadingMap(validAlerts)
+
   // Collapse rows in this response that share the same samplingPointId.
   // Cron-job rule: oldest timestamp wins (breach-started time), highest daqi
   // as tie-breaker when timestamps are equal. This ensures the notification
@@ -433,6 +507,13 @@ export async function processDaqiAlerts(db) {
   const counts = { new: 0, 'update-only': 0, 'skip-stuck': 0 }
 
   for (const alertDetail of uniqueCandidates) {
+    // Attach the latest Ricardo date and daqi for this samplingPointId so that
+    // markAlertInProgress / updateStateForExistingAlert store the most recent
+    // reading's values rather than the (older) dedup breach-start values.
+    const enrichedDetail = enrichAlertWithLatestReading(
+      alertDetail,
+      latestReadingBySamplingPointId
+    )
     const existing = stateBySamplingPointId.get(alertDetail.samplingPointId)
     const verdict = classifyAlert(existing, now)
     counts[verdict]++
@@ -445,7 +526,7 @@ export async function processDaqiAlerts(db) {
     }
 
     if (verdict === 'update-only') {
-      await updateStateForExistingAlert(db, alertDetail, existing)
+      await updateStateForExistingAlert(db, enrichedDetail, existing)
       logger.info(
         `[DAQI] Update-only for samplingPointId ${alertDetail.samplingPointId} (last Ricardo reading at ${existing.lastUpdatedFromRicardo}, within 24h)`
       )
@@ -453,7 +534,7 @@ export async function processDaqiAlerts(db) {
     }
 
     // verdict === 'new'
-    await processAlertForUsers(db, alertDetail)
+    await processAlertForUsers(db, enrichedDetail)
   }
 
   logger.info(
