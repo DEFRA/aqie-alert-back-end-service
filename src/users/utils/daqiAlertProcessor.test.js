@@ -535,8 +535,10 @@ describe('daqiAlertProcessor', () => {
       // Three rows, same samplingPointId — collapses to one notification
       expect(sendNotification).toHaveBeenCalledTimes(1)
 
-      // Cron-job rule: oldest timestamp wins (breach-started time).
-      // t1 (SAMPLE_ALERT_DATE, ~60 min ago) is the oldest → wins.
+      // Cron-job rule: oldest timestamp anchors alert-started-timestamp
+      // (breach-started time) — t1 (SAMPLE_ALERT_DATE, ~60 min ago) is oldest.
+      // But daqi and lastUpdatedFromRicardo reflect Ricardo's LATEST reading
+      // (t3, ~40 min ago, daqi 8) captured pre-dedup.
       expect(db._state.updateOne).toHaveBeenCalledWith(
         {
           samplingPointId: 77162,
@@ -544,7 +546,7 @@ describe('daqiAlertProcessor', () => {
         },
         expect.objectContaining({
           $set: expect.objectContaining({
-            lastUpdatedFromRicardo: SAMPLE_ALERT_DATE,
+            lastUpdatedFromRicardo: t3,
             daqi: 8,
             'alert-started-timestamp': SAMPLE_ALERT_DATE
           })
@@ -553,19 +555,21 @@ describe('daqiAlertProcessor', () => {
       )
     })
 
-    it('update-only: bumps lastUpdatedFromRicardo to the oldest in-cycle reading when multiple readings exist for the same samplingPointId', async () => {
-      // Cron-job rule: oldest timestamp wins (breach-started time).
+    it('update-only: bumps lastUpdatedFromRicardo and daqi to the LATEST in-cycle reading when multiple readings exist for the same samplingPointId', async () => {
       // Ricardo emits two readings for samplingPointId 77162 in one cycle response.
       // The state row is already processed and within 24h → verdict = 'update-only'.
-      // deduplicateAlertsOldestFirst keeps the OLDEST reading per samplingPointId,
-      // so updateStateForExistingAlert writes the older date as lastUpdatedFromRicardo.
+      // deduplicateAlertsOldestFirst keeps the OLDEST reading as the breach-start
+      // anchor, but the pre-dedup latest-reading snapshot means
+      // updateStateForExistingAlert writes the LATEST date/daqi so the state row
+      // reflects Ricardo's most recent measurement (the reported bug: daqi and
+      // lastUpdatedFromRicardo must move to the newer reading).
       const db = makeDb()
       const olderReadingDate = new Date(
         Date.now() - 80 * 60 * 1000
-      ).toISOString() // 80 min ago, daqi 9 — should win (oldest)
+      ).toISOString() // 80 min ago, daqi 9 — breach-start anchor
       const latestReadingDate = new Date(
         Date.now() - 40 * 60 * 1000
-      ).toISOString() // 40 min ago, daqi 10
+      ).toISOString() // 40 min ago, daqi 10 — latest → written to state
       const existingStartedAt = new Date(
         Date.now() - 5 * 60 * 60 * 1000
       ).toISOString() // 5h ago — the original event start, within 24h window
@@ -596,8 +600,9 @@ describe('daqiAlertProcessor', () => {
       // Still within the 24h dedup window → no re-notification
       expect(sendNotification).not.toHaveBeenCalled()
 
-      // lastUpdatedFromRicardo must reflect the OLDEST reading (olderReadingDate / daqi 9)
-      // because the cron-job rule is: oldest timestamp wins (breach-started time).
+      // lastUpdatedFromRicardo and daqi must reflect the LATEST reading
+      // (latestReadingDate / daqi 10) so the state row tracks Ricardo's most
+      // recent measurement, while alert-started-timestamp stays the event anchor.
       expect(db._state.updateOne).toHaveBeenCalledWith(
         {
           samplingPointId: 77162,
@@ -605,8 +610,8 @@ describe('daqiAlertProcessor', () => {
         },
         {
           $set: {
-            lastUpdatedFromRicardo: olderReadingDate,
-            daqi: 9
+            lastUpdatedFromRicardo: latestReadingDate,
+            daqi: 10
           }
         }
       )
