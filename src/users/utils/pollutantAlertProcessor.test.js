@@ -7,7 +7,8 @@ import {
   buildAuditKey,
   buildLatestReadingMap,
   sendAlertToUser,
-  processPollutantAlerts
+  processPollutantAlerts,
+  loadRecentStateRowsByAlertId
 } from './pollutantAlertProcessor.js'
 
 vi.mock('./ricardoApiClient.js', () => ({
@@ -334,6 +335,58 @@ describe('pollutantAlertProcessor', () => {
         expect.stringContaining('alert-999-')
       )
       expect(result).toBe('notif-123')
+    })
+  })
+
+  describe('loadRecentStateRowsByAlertId', () => {
+    function makeStateDb(rows) {
+      return {
+        collection: vi.fn(() => ({
+          find: vi.fn(() => ({
+            toArray: vi.fn().mockResolvedValue(rows)
+          }))
+        }))
+      }
+    }
+
+    it('returns an empty map when there are no candidates', async () => {
+      const db = makeStateDb([])
+      const map = await loadRecentStateRowsByAlertId(db, [])
+      expect(map.size).toBe(0)
+      expect(db.collection).not.toHaveBeenCalled()
+    })
+
+    it('picks the chronologically latest row even when a stale legacy row is stored as a BSON Date', async () => {
+      // Mirrors the production data for alert-id 61: three ISO-string rows plus
+      // one legacy row (migrated) whose timestamps are BSON Dates. A MongoDB
+      // `.sort({ 'alert-started-timestamp': -1 })` would surface the Date-typed
+      // legacy row first (Date sorts after String in BSON), so this asserts the
+      // JS selection instead picks the true latest event.
+      const staleLegacyRow = {
+        'alert-id': 61,
+        'alert-started-timestamp': new Date('2026-07-20T17:00:01.422Z'),
+        lastUpdatedFromRicardo: new Date('2026-07-20T17:00:02.072Z'),
+        status: 'processed'
+      }
+      const latestRow = {
+        'alert-id': 61,
+        'alert-started-timestamp': '2026-07-29T08:00:00+01:00',
+        lastUpdatedFromRicardo: '2026-07-29T10:00:00+01:00',
+        status: 'processed'
+      }
+      const olderStringRow = {
+        'alert-id': 61,
+        'alert-started-timestamp': '2026-07-26T19:00:00+01:00',
+        lastUpdatedFromRicardo: '2026-07-26T19:00:00+01:00',
+        status: 'processed'
+      }
+      const db = makeStateDb([staleLegacyRow, latestRow, olderStringRow])
+
+      const map = await loadRecentStateRowsByAlertId(db, [
+        { samplingPointId: 61 }
+      ])
+
+      expect(map.get(61)).toBe(latestRow)
     })
   })
 
@@ -701,7 +754,10 @@ describe('pollutantAlertProcessor', () => {
       expect(processedCalls).toHaveLength(0)
     })
 
-    it('logs a warning and continues when audit insert hits a duplicate key (11000)', async () => {
+    it('skips the re-send when audit insert hits a duplicate key (11000)', async () => {
+      // A duplicate audit row means this recipient was already notified for this
+      // alert-id on an earlier cycle. The audit unique index is the idempotency
+      // guard, so the notification must NOT be sent again.
       const db = makeDb()
       const dupError = Object.assign(new Error('E11000 duplicate key error'), {
         code: 11000
@@ -711,7 +767,7 @@ describe('pollutantAlertProcessor', () => {
       sendNotification.mockResolvedValue({ notificationId: 'notif-dup' })
 
       await expect(processPollutantAlerts(db)).resolves.not.toThrow()
-      expect(sendNotification).toHaveBeenCalledTimes(1)
+      expect(sendNotification).not.toHaveBeenCalled()
     })
 
     it('catches an outer error when audit insert fails with a non-11000 code', async () => {

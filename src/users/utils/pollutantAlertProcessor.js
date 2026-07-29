@@ -146,11 +146,33 @@ export function buildLatestReadingMap(alerts) {
 }
 
 /**
+ * Normalises a timestamp that may be stored as an ISO string (runtime writes)
+ * or a BSON Date (legacy `addAlertStartedTimestampToState` migration writes)
+ * to epoch milliseconds. Missing/invalid values return 0 so they sort oldest.
+ */
+function toEpochMs(value) {
+  if (!value) {
+    return 0
+  }
+  const ms = new Date(value).getTime()
+  return Number.isFinite(ms) ? ms : 0
+}
+
+/**
  * Bulk-loads the most recent state row per samplingPointId (stored under
- * `alert-id`) for all candidates. Sorted by alert-started-timestamp descending
- * so that when multiple event rows exist for the same samplingPointId (each
- * beyond-24h gap creates a new row), the first map.set wins — giving us the
- * latest event row for each id.
+ * `alert-id`) for all candidates, so that when multiple event rows exist for
+ * the same samplingPointId (each beyond-24h gap creates a new row) we classify
+ * against the latest one.
+ *
+ * Selection is done in JS by the chronological value of
+ * `alert-started-timestamp`, NOT via a MongoDB `.sort()`. The
+ * `addAlertStartedTimestampToState` migration stores this field as a BSON Date,
+ * while the runtime writes it as an ISO string. MongoDB's cross-type sort orders
+ * every Date AFTER every String, so `.sort({ 'alert-started-timestamp': -1 })`
+ * would surface a stale Date-typed legacy row as the "most recent" one; its
+ * expired `lastUpdatedFromRicardo` then makes classifyAlert return 'new' every
+ * cycle and re-notify users indefinitely. `toEpochMs` compares both shapes by
+ * actual time.
  * @returns {Promise<Map<number, object>>}
  */
 async function loadRecentStateRowsByAlertId(db, candidates) {
@@ -161,11 +183,15 @@ async function loadRecentStateRowsByAlertId(db, candidates) {
   const rows = await db
     .collection(POLLUTANT_ALERT_STATUS_COLLECTION)
     .find({ 'alert-id': { $in: alertIds } })
-    .sort({ 'alert-started-timestamp': -1 })
     .toArray()
   const map = new Map()
   for (const row of rows) {
-    if (!map.has(row['alert-id'])) {
+    const existing = map.get(row['alert-id'])
+    if (
+      !existing ||
+      toEpochMs(row['alert-started-timestamp']) >
+        toEpochMs(existing['alert-started-timestamp'])
+    ) {
       map.set(row['alert-id'], row)
     }
   }
@@ -262,12 +288,15 @@ async function insertPollutantAuditEntry(db, alertDetail, userMatch) {
     await db.collection(POLLUTANT_ALERTS_AUDIT_COLLECTION).insertOne(entry)
   } catch (err) {
     if (err.code === DB_ERROR_CODE) {
+      // The {alert-id, user_contact, location} unique index already holds a row
+      // for this recipient + alert-id: they were notified on an earlier cycle.
+      // Return false so the caller skips the (duplicate) re-send.
       logger.warn(
         `[Pollutant] Duplicate audit entry skipped ${JSON.stringify({ 'alert-id': alertDetail['alert-id'], user_contact: userMatch.userContact, location: userMatch.location })}`
       )
-    } else {
-      throw err
+      return false
     }
+    throw err
   }
   return entry
 }
@@ -428,9 +457,7 @@ function classifyAlert(existingRow, now) {
   if (existingRow.status === 'in-progress') {
     return 'skip-stuck'
   }
-  const lastUpdatedMs = existingRow.lastUpdatedFromRicardo
-    ? new Date(existingRow.lastUpdatedFromRicardo).getTime()
-    : 0
+  const lastUpdatedMs = toEpochMs(existingRow.lastUpdatedFromRicardo)
   if (now - lastUpdatedMs <= TWENTY_FOUR_HOURS_MS) {
     return 'update-only'
   }
@@ -558,5 +585,6 @@ export {
   updateStateForExistingAlert,
   sendAlertToUser,
   classifyAlert,
-  buildAuditKey
+  buildAuditKey,
+  loadRecentStateRowsByAlertId
 }
