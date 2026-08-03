@@ -9,7 +9,8 @@ import { formatPollutantName } from '../utils/pollutantAlertProcessor.js'
 import { mapUpstreamError } from '../utils/upstreamErrorMapper.js'
 import {
   isWithinLast24Hours,
-  getRollingDayWindow
+  getRollingDayWindow,
+  applyOffsetToTimestamp
 } from '../utils/dateRangeUtils.js'
 import { createLogger } from '../../common/helpers/logging/logger.js'
 import { STATUS_OK } from '../utils/constants.js'
@@ -27,7 +28,7 @@ function buildAlertEntry(alert) {
     'pollutant-name': formatPollutantName(alert.pollutant),
     'monitoring-station-name': siteInfo?.monitoringStationName ?? null,
     region: siteInfo?.region ?? null,
-    'alert-started': alert.date
+    'alert-started': applyOffsetToTimestamp(alert.date)
   }
 }
 
