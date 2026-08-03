@@ -9,7 +9,7 @@ const logger = createLogger()
 // large error/HTML body can't flood the logs on every failed notification.
 const ERROR_BODY_LOG_LIMIT = 200
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// ── Helpers ─────────────────────────────────────────────────────────────────
 
 function buildFetchOptions(payload, finalRequestId) {
   const options = {
