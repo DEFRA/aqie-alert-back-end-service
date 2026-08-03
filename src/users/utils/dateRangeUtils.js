@@ -50,19 +50,25 @@ export function getRollingDayWindow() {
  * Timestamps with +00:00 are returned unchanged (no adjustment needed).
  */
 export function applyOffsetToTimestamp(isoString) {
-  if (!isoString) return isoString
+  if (!isoString) {
+    return isoString
+  }
 
   const match = isoString.match(
     /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})([+-])(\d{2}):(\d{2})$/
   )
-  if (!match) return isoString
+  if (!match) {
+    return isoString
+  }
 
   const [, datetimePart, sign, offsetHH, offsetMM] = match
   const offsetMinutes =
     (parseInt(offsetHH, 10) * 60 + parseInt(offsetMM, 10)) *
     (sign === '+' ? 1 : -1)
 
-  if (offsetMinutes === 0) return isoString
+  if (offsetMinutes === 0) {
+    return isoString
+  }
 
   const adjusted = new Date(datetimePart + 'Z')
   adjusted.setUTCMinutes(adjusted.getUTCMinutes() + offsetMinutes)
