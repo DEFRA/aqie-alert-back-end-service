@@ -52,6 +52,7 @@ function makeAlert(overrides = {}) {
     siteId: SITE_ID_1,
     samplingPointId: 1187,
     pollutant: 'O<sub>3</sub> (O3)',
+    concentration: 182.5,
     alertLevel: true,
     informationLevel: false,
     date: recentDate,
@@ -255,9 +256,31 @@ describe('aqsrAlertController', () => {
       expect(responseArg).toHaveLength(1)
       expect(responseArg[0]['active-breaches']).toBe(true)
       expect(responseArg[0]['sampling-id']).toBe(1187)
+      expect(responseArg[0].concentration).toBe(182.5)
       expect(responseArg[0].region).toBe(REGION)
       expect(responseArg[0]['monitoring-station-name']).toBe('Leeds Centre')
       expect(responseArg[0]['alert-started']).toBe(recentDate)
+    })
+
+    it('should set concentration to null when missing from Ricardo response', async () => {
+      mockFindRegion.mockReturnValue(REGION)
+      mockFetchAlerts.mockResolvedValue({
+        member: [
+          makeAlert({
+            siteId: SITE_ID_1,
+            concentration: undefined,
+            date: recentDate
+          })
+        ]
+      })
+
+      await aqsrAlertHandler(
+        makeRequest({ lat: 53.8, long: -1.5, currentDay: true }),
+        mockH
+      )
+
+      const responseArg = mockH.response.mock.calls[0][0]
+      expect(responseArg[0].concentration).toBeNull()
     })
 
     it('should set sampling-id to null when samplingPointId is missing from Ricardo response', async () => {
@@ -524,6 +547,27 @@ describe('aqsrAlertController', () => {
       expect(responseArg).toHaveLength(1)
       expect(responseArg[0]['active-breaches']).toBe(true)
       expect(responseArg[0]['sampling-id']).toBe(2345)
+      expect(responseArg[0].concentration).toBe(182.5)
+    })
+
+    it('should set concentration to null when missing from Ricardo response', async () => {
+      mockFetchAlerts.mockResolvedValue({
+        member: [
+          makeAlert({
+            siteId: SITE_ID_1,
+            concentration: undefined,
+            date: recentDate
+          })
+        ]
+      })
+
+      await aqsrAlertHandler(
+        makeRequest({ startDate: '2024-12-01', endDate: '2025-08-13' }),
+        mockH
+      )
+
+      const responseArg = mockH.response.mock.calls[0][0]
+      expect(responseArg[0].concentration).toBeNull()
     })
 
     it('should set active-breaches: false for alert older than 24h', async () => {

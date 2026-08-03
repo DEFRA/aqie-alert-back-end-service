@@ -239,6 +239,7 @@ GET /aqsr-alert?start-date=2026-05-01&end-date=2026-05-08
     "active-breaches": true,
     "sampling-id": 1187,
     "pollutant-name": "ozone (O3)",
+    "concentration": 182.5,
     "monitoring-station-name": "Cardiff Centre",
     "region": "South East Wales",
     "alert-started": "2026-05-08T09:00:00+01:00"
@@ -253,6 +254,7 @@ GET /aqsr-alert?start-date=2026-05-01&end-date=2026-05-08
 | `active-breaches`         | boolean        | `true` if the alert date is within the last 24 hours; `false` for historical ones                                    |
 | `sampling-id`             | number \| null | Ricardo `samplingPointId` for the monitoring point that recorded the breach; `null` if absent in the upstream record |
 | `pollutant-name`          | string         | Human-readable pollutant name e.g. `"ozone (O3)"`, `"nitrogen dioxide (NO2)"`                                        |
+| `concentration`           | number \| null | Measured pollutant concentration for the breach, as reported by Ricardo; `null` if absent in the upstream record     |
 | `monitoring-station-name` | string \| null | Name of the monitoring station from Ricardo site metadata; `null` if not cached                                      |
 | `region`                  | string \| null | Region resolved from the site's coordinates; `null` if not in cache                                                  |
 | `alert-started`           | string         | ISO 8601 timestamp when the alert was recorded by Ricardo                                                            |
