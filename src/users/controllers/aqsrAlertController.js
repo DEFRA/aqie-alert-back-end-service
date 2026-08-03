@@ -25,6 +25,7 @@ function buildAlertEntry(alert) {
     'active-breaches': isWithinLast24Hours(alert.date),
     'sampling-id': alert.samplingPointId ?? null,
     'pollutant-name': formatPollutantName(alert.pollutant),
+    concentration: alert.concentration ?? null,
     'monitoring-station-name': siteInfo?.monitoringStationName ?? null,
     region: siteInfo?.region ?? null,
     'alert-started': alert.date
