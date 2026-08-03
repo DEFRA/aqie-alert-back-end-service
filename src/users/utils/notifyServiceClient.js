@@ -5,11 +5,11 @@ import { createLogger } from '../../common/helpers/logging/logger.js'
 import { maskPhoneNumber, maskEmail, maskTemplateId } from './maskingUtils.js'
 
 const logger = createLogger()
-// Cap how much of an upstream error body we log / surface in err.message, so a
+// Cap how much of an upstream error body we log / -surface in err.message, so a
 // large error/HTML body can't flood the logs on every failed notification.
 const ERROR_BODY_LOG_LIMIT = 200
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// ── Helpers ─────────────────────────────────────────────────────────────────
 
 function buildFetchOptions(payload, finalRequestId) {
   const options = {
