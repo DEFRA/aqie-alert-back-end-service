@@ -19,7 +19,7 @@ import {
 } from './users/utils/ricardoSiteAndRegionCache.js'
 import { addLastUpdatedFromRicardoToState } from './migrations/addLastUpdatedFromRicardoToState.js'
 import { addAlertStartedTimestampToState } from './migrations/addAlertStartedTimestampToState.js'
-//import { migratePollutantStateToEventModel } from './migrations/migratePollutantStateToEventModel.js'
+import { dropStaleSingleColumnUniqueIndex } from './migrations/dropStaleSingleColumnUniqueIndex.js'
 
 async function createServer() {
   setupProxy()
@@ -73,9 +73,9 @@ async function createServer() {
 
   server.ext('onPreStart', async () => {
     await initSiteCache()
+    await dropStaleSingleColumnUniqueIndex(server.db)
     await addLastUpdatedFromRicardoToState(server.db)
     await addAlertStartedTimestampToState(server.db)
-    //await migratePollutantStateToEventModel(server.db)
   })
 
   server.ext('onPreStop', () => {

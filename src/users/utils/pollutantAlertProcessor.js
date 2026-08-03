@@ -78,6 +78,10 @@ function buildExistingEventStateQuery(samplingPointId, alertStartedTimestamp) {
   }
 }
 
+function isAlertOrInformationLevel(item) {
+  return item.alertLevel === true || item.informationLevel === true
+}
+
 function filterValidAlerts(members) {
   // Note: Ricardo's own `region` field is deliberately NOT carried through.
   // Region is always resolved from siteId via the GeoJSON-backed site cache in
@@ -88,7 +92,7 @@ function filterValidAlerts(members) {
     .filter(
       (item) =>
         item.validationStatus === 2 &&
-        (item.alertLevel === true || item.informationLevel === true) &&
+        isAlertOrInformationLevel(item) &&
         item.samplingPointId !== undefined &&
         item.siteId &&
         item.date &&
@@ -106,11 +110,69 @@ function filterValidAlerts(members) {
 }
 
 /**
+ * Builds a map of samplingPointId → { date, concentration } for the NEWEST
+ * reading from the full (pre-dedup) valid alert list.
+ *
+ * `deduplicateAlertsOldestFirst` keeps the OLDEST reading per samplingPointId
+ * so that `alert-started-timestamp` reflects when the breach first occurred.
+ * However that means the NEWER readings (updated concentrations / timestamps
+ * from the same breach event) are discarded.
+ *
+ * We capture the latest date AND concentration here — separately — so that
+ * `lastUpdatedFromRicardo` and the stored `concentration` always reflect
+ * Ricardo's most recent measurement, not the breach-start reading.
+ *
+ * Example: Ricardo returns samplingPointId 2211 at 08:00 (189 µg/m³) and
+ *          15:00 (199 µg/m³):
+ *   alert-started-timestamp  = 08:00  (oldest — breach start)
+ *   lastUpdatedFromRicardo   = 15:00  (newest — latest confirmation)
+ *   concentration (state)    = 199    (newest — current severity)
+ *
+ * @param {object[]} alerts - The already-filtered valid alert list (pre-dedup)
+ * @returns {Map<number, {date: string, concentration: number}>}
+ */
+export function buildLatestReadingMap(alerts) {
+  const map = new Map()
+  for (const alert of alerts) {
+    const existing = map.get(alert.samplingPointId)
+    if (!existing || new Date(alert.date) > new Date(existing.date)) {
+      map.set(alert.samplingPointId, {
+        date: alert.date,
+        concentration: alert.concentration
+      })
+    }
+  }
+  return map
+}
+
+/**
+ * Normalises a timestamp that may be stored as an ISO string (runtime writes)
+ * or a BSON Date (legacy `addAlertStartedTimestampToState` migration writes)
+ * to epoch milliseconds. Missing/invalid values return 0 so they sort oldest.
+ */
+function toEpochMs(value) {
+  if (!value) {
+    return 0
+  }
+  const ms = new Date(value).getTime()
+  return Number.isFinite(ms) ? ms : 0
+}
+
+/**
  * Bulk-loads the most recent state row per samplingPointId (stored under
- * `alert-id`) for all candidates. Sorted by alert-started-timestamp descending
- * so that when multiple event rows exist for the same samplingPointId (each
- * beyond-24h gap creates a new row), the first map.set wins — giving us the
- * latest event row for each id.
+ * `alert-id`) for all candidates, so that when multiple event rows exist for
+ * the same samplingPointId (each beyond-24h gap creates a new row) we classify
+ * against the latest one.
+ *
+ * Selection is done in JS by the chronological value of
+ * `alert-started-timestamp`, NOT via a MongoDB `.sort()`. The
+ * `addAlertStartedTimestampToState` migration stores this field as a BSON Date,
+ * while the runtime writes it as an ISO string. MongoDB's cross-type sort orders
+ * every Date AFTER every String, so `.sort({ 'alert-started-timestamp': -1 })`
+ * would surface a stale Date-typed legacy row as the "most recent" one; its
+ * expired `lastUpdatedFromRicardo` then makes classifyAlert return 'new' every
+ * cycle and re-notify users indefinitely. `toEpochMs` compares both shapes by
+ * actual time.
  * @returns {Promise<Map<number, object>>}
  */
 async function loadRecentStateRowsByAlertId(db, candidates) {
@@ -121,11 +183,15 @@ async function loadRecentStateRowsByAlertId(db, candidates) {
   const rows = await db
     .collection(POLLUTANT_ALERT_STATUS_COLLECTION)
     .find({ 'alert-id': { $in: alertIds } })
-    .sort({ 'alert-started-timestamp': -1 })
     .toArray()
   const map = new Map()
   for (const row of rows) {
-    if (!map.has(row['alert-id'])) {
+    const existing = map.get(row['alert-id'])
+    if (
+      !existing ||
+      toEpochMs(row['alert-started-timestamp']) >
+        toEpochMs(existing['alert-started-timestamp'])
+    ) {
       map.set(row['alert-id'], row)
     }
   }
@@ -135,17 +201,26 @@ async function loadRecentStateRowsByAlertId(db, candidates) {
 async function markAlertInProgress(db, alertDetail) {
   // New event row: compound key (alert-id + alert-started-timestamp).
   // Beyond-24h gap → different alert-started-timestamp → new document inserted.
-  // Within-24h repeat is routed to updateStateForExistingAlert, not here.
+  // Within-24h repeat → same compound key → existing document updated in-place.
+  //
+  // lastUpdatedFromRicardo is set to alertDetail.date (Ricardo's event timestamp),
+  // matching the DAQI cron pattern. The 24h dedup window in classifyAlert compares
+  // Date.now() against this value — as long as Ricardo keeps returning this
+  // samplingPointId within a 24h rolling window, the breach is treated as one
+  // continuous event and users are not re-notified.
   await db.collection(POLLUTANT_ALERT_STATUS_COLLECTION).updateOne(
     buildNewEventStateQuery(alertDetail),
     {
       $set: {
         'alert-id': alertDetail.samplingPointId,
+        siteId: alertDetail.siteId,
         region: alertDetail.region,
         pollutant: alertDetail.pollutant,
-        concentration: alertDetail.concentration,
+        concentration:
+          alertDetail.latestRicardoConcentration ?? alertDetail.concentration,
         alertThreshold: alertDetail.alertThreshold,
-        lastUpdatedFromRicardo: alertDetail.date,
+        lastUpdatedFromRicardo:
+          alertDetail.latestRicardoDate ?? alertDetail.date,
         status: 'in-progress',
         'alert-started-timestamp': alertDetail.date
       },
@@ -172,6 +247,10 @@ async function markAlertProcessed(db, alertDetail) {
  * sent and no audit row is written — the row is just kept current for
  * traceability. Uses the existing row's alert-started-timestamp to target the
  * correct event document, not the incoming alert date.
+ *
+ * lastUpdatedFromRicardo is set to alertDetail.date (Ricardo's event timestamp),
+ * matching the DAQI cron pattern, so the 24h dedup window stays anchored to
+ * the breach event time reported by Ricardo.
  */
 async function updateStateForExistingAlert(db, alertDetail, existingRow) {
   await db
@@ -183,8 +262,10 @@ async function updateStateForExistingAlert(db, alertDetail, existingRow) {
       ),
       {
         $set: {
-          lastUpdatedFromRicardo: alertDetail.date,
-          concentration: alertDetail.concentration
+          lastUpdatedFromRicardo:
+            alertDetail.latestRicardoDate ?? alertDetail.date,
+          concentration:
+            alertDetail.latestRicardoConcentration ?? alertDetail.concentration
         }
       }
     )
@@ -207,12 +288,15 @@ async function insertPollutantAuditEntry(db, alertDetail, userMatch) {
     await db.collection(POLLUTANT_ALERTS_AUDIT_COLLECTION).insertOne(entry)
   } catch (err) {
     if (err.code === DB_ERROR_CODE) {
+      // The {alert-id, user_contact, location} unique index already holds a row
+      // for this recipient + alert-id: they were notified on an earlier cycle.
+      // Return false so the caller skips the (duplicate) re-send.
       logger.warn(
         `[Pollutant] Duplicate audit entry skipped ${JSON.stringify({ 'alert-id': alertDetail['alert-id'], user_contact: userMatch.userContact, location: userMatch.location })}`
       )
-    } else {
-      throw err
+      return false
     }
+    throw err
   }
   return entry
 }
@@ -373,13 +457,41 @@ function classifyAlert(existingRow, now) {
   if (existingRow.status === 'in-progress') {
     return 'skip-stuck'
   }
-  const lastUpdatedMs = existingRow.lastUpdatedFromRicardo
-    ? new Date(existingRow.lastUpdatedFromRicardo).getTime()
-    : 0
+  const lastUpdatedMs = toEpochMs(existingRow.lastUpdatedFromRicardo)
   if (now - lastUpdatedMs <= TWENTY_FOUR_HOURS_MS) {
     return 'update-only'
   }
   return 'new'
+}
+
+function enrichAlertWithLatestReading(
+  alertDetail,
+  latestReadingBySamplingPointId
+) {
+  const latestReading = latestReadingBySamplingPointId.get(
+    alertDetail.samplingPointId
+  )
+  return {
+    ...alertDetail,
+    latestRicardoDate: latestReading?.date ?? alertDetail.date,
+    latestRicardoConcentration:
+      latestReading?.concentration ?? alertDetail.concentration
+  }
+}
+
+async function dispatchAlert(db, enrichedDetail, existing, verdict) {
+  if (verdict === 'skip-stuck') {
+    logger.info(
+      `[Pollutant] Skipping samplingPointId ${enrichedDetail.samplingPointId}: prior cycle left it in-progress (likely crashed mid-process — manual review needed)`
+    )
+  } else if (verdict === 'update-only') {
+    await updateStateForExistingAlert(db, enrichedDetail, existing)
+    logger.info(
+      `[Pollutant] Update-only for samplingPointId ${enrichedDetail.samplingPointId} (last Ricardo reading at ${existing.lastUpdatedFromRicardo}, within 24h)`
+    )
+  } else {
+    await processAlertForUsers(db, enrichedDetail)
+  }
 }
 
 export async function processPollutantAlerts(db) {
@@ -407,6 +519,12 @@ export async function processPollutantAlerts(db) {
     return
   }
 
+  // Before dedup: snapshot the LATEST (newest) Ricardo date and concentration
+  // per samplingPointId. deduplicateAlertsOldestFirst keeps the oldest date as
+  // the breach-start anchor, but lastUpdatedFromRicardo and the stored
+  // concentration should reflect Ricardo's most recent measurement.
+  const latestReadingBySamplingPointId = buildLatestReadingMap(validAlerts)
+
   // Collapse rows in this response that share the same samplingPointId.
   // Cron-job rule: oldest timestamp wins (breach-started time), highest
   // concentration as tie-breaker when timestamps are equal. This ensures the
@@ -433,27 +551,17 @@ export async function processPollutantAlerts(db) {
   const counts = { new: 0, 'update-only': 0, 'skip-stuck': 0 }
 
   for (const alertDetail of uniqueCandidates) {
+    // Attach the latest Ricardo date and concentration for this samplingPointId
+    // so that markAlertInProgress / updateStateForExistingAlert store the most
+    // recent reading's values rather than the (potentially older) dedup values.
+    const enrichedDetail = enrichAlertWithLatestReading(
+      alertDetail,
+      latestReadingBySamplingPointId
+    )
     const existing = stateByAlertId.get(alertDetail.samplingPointId)
     const verdict = classifyAlert(existing, now)
     counts[verdict]++
-
-    if (verdict === 'skip-stuck') {
-      logger.info(
-        `[Pollutant] Skipping samplingPointId ${alertDetail.samplingPointId}: prior cycle left it in-progress (likely crashed mid-process — manual review needed)`
-      )
-      continue
-    }
-
-    if (verdict === 'update-only') {
-      await updateStateForExistingAlert(db, alertDetail, existing)
-      logger.info(
-        `[Pollutant] Update-only for samplingPointId ${alertDetail.samplingPointId} (last Ricardo reading at ${existing.lastUpdatedFromRicardo}, within 24h)`
-      )
-      continue
-    }
-
-    // verdict === 'new'
-    await processAlertForUsers(db, alertDetail)
+    await dispatchAlert(db, enrichedDetail, existing, verdict)
   }
 
   logger.info(
@@ -477,5 +585,6 @@ export {
   updateStateForExistingAlert,
   sendAlertToUser,
   classifyAlert,
-  buildAuditKey
+  buildAuditKey,
+  loadRecentStateRowsByAlertId
 }

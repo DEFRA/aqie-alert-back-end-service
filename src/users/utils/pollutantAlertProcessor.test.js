@@ -5,8 +5,10 @@ import {
   cleanPollutantName,
   formatPollutantName,
   buildAuditKey,
+  buildLatestReadingMap,
   sendAlertToUser,
-  processPollutantAlerts
+  processPollutantAlerts,
+  loadRecentStateRowsByAlertId
 } from './pollutantAlertProcessor.js'
 
 vi.mock('./ricardoApiClient.js', () => ({
@@ -198,6 +200,48 @@ describe('pollutantAlertProcessor', () => {
     })
   })
 
+  describe('buildLatestReadingMap', () => {
+    it('returns the single reading when only one alert per samplingPointId', () => {
+      const result = buildLatestReadingMap([sampleMember])
+      expect(result.get(500)).toEqual({ date: SAMPLE_DATE, concentration: 180 })
+    })
+
+    it('returns the newest reading when multiple readings for the same samplingPointId', () => {
+      const olderDate = new Date(Date.now() - 7 * 60 * 60 * 1000).toISOString()
+      const newerDate = new Date(Date.now() - 1 * 60 * 60 * 1000).toISOString()
+      const result = buildLatestReadingMap([
+        { ...sampleMember, date: olderDate, concentration: 150 },
+        { ...sampleMember, date: newerDate, concentration: 199 }
+      ])
+      expect(result.get(500)).toEqual({ date: newerDate, concentration: 199 })
+    })
+
+    it('handles multiple distinct samplingPointIds independently', () => {
+      const date1 = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString()
+      const date2 = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString()
+      const result = buildLatestReadingMap([
+        {
+          ...sampleMember,
+          samplingPointId: 100,
+          date: date1,
+          concentration: 120
+        },
+        {
+          ...sampleMember,
+          samplingPointId: 200,
+          date: date2,
+          concentration: 230
+        }
+      ])
+      expect(result.get(100)).toEqual({ date: date1, concentration: 120 })
+      expect(result.get(200)).toEqual({ date: date2, concentration: 230 })
+    })
+
+    it('returns an empty map for an empty input', () => {
+      expect(buildLatestReadingMap([])).toEqual(new Map())
+    })
+  })
+
   describe('getMatchingUsers', () => {
     const users = [
       {
@@ -291,6 +335,58 @@ describe('pollutantAlertProcessor', () => {
         expect.stringContaining('alert-999-')
       )
       expect(result).toBe('notif-123')
+    })
+  })
+
+  describe('loadRecentStateRowsByAlertId', () => {
+    function makeStateDb(rows) {
+      return {
+        collection: vi.fn(() => ({
+          find: vi.fn(() => ({
+            toArray: vi.fn().mockResolvedValue(rows)
+          }))
+        }))
+      }
+    }
+
+    it('returns an empty map when there are no candidates', async () => {
+      const db = makeStateDb([])
+      const map = await loadRecentStateRowsByAlertId(db, [])
+      expect(map.size).toBe(0)
+      expect(db.collection).not.toHaveBeenCalled()
+    })
+
+    it('picks the chronologically latest row even when a stale legacy row is stored as a BSON Date', async () => {
+      // Mirrors the production data for alert-id 61: three ISO-string rows plus
+      // one legacy row (migrated) whose timestamps are BSON Dates. A MongoDB
+      // `.sort({ 'alert-started-timestamp': -1 })` would surface the Date-typed
+      // legacy row first (Date sorts after String in BSON), so this asserts the
+      // JS selection instead picks the true latest event.
+      const staleLegacyRow = {
+        'alert-id': 61,
+        'alert-started-timestamp': new Date('2026-07-20T17:00:01.422Z'),
+        lastUpdatedFromRicardo: new Date('2026-07-20T17:00:02.072Z'),
+        status: 'processed'
+      }
+      const latestRow = {
+        'alert-id': 61,
+        'alert-started-timestamp': '2026-07-29T08:00:00+01:00',
+        lastUpdatedFromRicardo: '2026-07-29T10:00:00+01:00',
+        status: 'processed'
+      }
+      const olderStringRow = {
+        'alert-id': 61,
+        'alert-started-timestamp': '2026-07-26T19:00:00+01:00',
+        lastUpdatedFromRicardo: '2026-07-26T19:00:00+01:00',
+        status: 'processed'
+      }
+      const db = makeStateDb([staleLegacyRow, latestRow, olderStringRow])
+
+      const map = await loadRecentStateRowsByAlertId(db, [
+        { samplingPointId: 61 }
+      ])
+
+      expect(map.get(61)).toBe(latestRow)
     })
   })
 
@@ -403,6 +499,7 @@ describe('pollutantAlertProcessor', () => {
         {
           $set: {
             'alert-id': 500,
+            siteId: 'UKA00500',
             region: 'England',
             pollutant: 'O<sub>3</sub> (O3)',
             concentration: 180,
@@ -415,8 +512,6 @@ describe('pollutantAlertProcessor', () => {
         },
         { upsert: true }
       )
-
-      // audit row carries the composite (per-emission) alert-id
       expect(db._audit.insertOne).toHaveBeenCalledWith(
         expect.objectContaining({
           'alert-id': `500-${SAMPLE_DATE}`,
@@ -482,6 +577,55 @@ describe('pollutantAlertProcessor', () => {
       )
     })
 
+    it('update-only: advances lastUpdatedFromRicardo to the newest Ricardo reading when multiple readings arrive for the same samplingPointId', async () => {
+      // Ricardo returns 2 readings for the same samplingPointId 500:
+      //   SAMPLE_DATE (~60 min ago)  — oldest → kept by dedup as alert-started-timestamp
+      //   newerDate   (~30 min ago)  — newest → discarded from dedup but captured by buildLatestDateMap
+      //
+      // The state row (fiveHoursAgo lastUpdatedFromRicardo) marks this as update-only.
+      // updateStateForExistingAlert should set lastUpdatedFromRicardo = newerDate,
+      // NOT SAMPLE_DATE — so the 24h window is anchored to the latest Ricardo confirmation.
+      const db = makeDb()
+      const fiveHoursAgo = new Date(
+        Date.now() - 5 * 60 * 60 * 1000
+      ).toISOString()
+      const newerDate = new Date(Date.now() - 30 * 60 * 1000).toISOString()
+      db._state.find.mockReturnValueOnce({
+        sort: vi.fn(function () {
+          return this
+        }),
+        toArray: vi.fn().mockResolvedValue([
+          {
+            'alert-id': 500,
+            status: 'processed',
+            'alert-started-timestamp': fiveHoursAgo,
+            lastUpdatedFromRicardo: fiveHoursAgo
+          }
+        ])
+      })
+      fetchAlerts.mockResolvedValueOnce({
+        member: [
+          sampleMember, // SAMPLE_DATE (~60 min ago) concentration 180 — oldest
+          { ...sampleMember, date: newerDate, concentration: 199 } // newer reading
+        ]
+      })
+
+      await processPollutantAlerts(db)
+
+      expect(sendNotification).not.toHaveBeenCalled()
+      // lastUpdatedFromRicardo should be the NEWEST reading's date, not SAMPLE_DATE
+      // concentration should be the NEWEST reading's concentration (199), not oldest (180)
+      expect(db._state.updateOne).toHaveBeenCalledWith(
+        { 'alert-id': 500, 'alert-started-timestamp': fiveHoursAgo },
+        {
+          $set: {
+            lastUpdatedFromRicardo: newerDate,
+            concentration: 199
+          }
+        }
+      )
+    })
+
     it('re-notifies when the combo has been quiet for more than 24h', async () => {
       const db = makeDb()
       const twentyFiveHoursAgo = new Date(
@@ -532,9 +676,9 @@ describe('pollutantAlertProcessor', () => {
       const t3 = new Date(Date.now() - 40 * 60 * 1000).toISOString()
       fetchAlerts.mockResolvedValueOnce({
         member: [
-          sampleMember, // ~60 min ago, concentration 180 — oldest → wins
+          sampleMember, // ~60 min ago, concentration 180 — oldest → alert-started-timestamp
           { ...sampleMember, date: t2, concentration: 185 },
-          { ...sampleMember, date: t3, concentration: 182 }
+          { ...sampleMember, date: t3, concentration: 182 } // newest → lastUpdatedFromRicardo + concentration
         ]
       })
       sendNotification.mockResolvedValue({ notificationId: 'notif-x' })
@@ -542,18 +686,21 @@ describe('pollutantAlertProcessor', () => {
       await processPollutantAlerts(db)
 
       expect(sendNotification).toHaveBeenCalledTimes(1)
-      // oldest reading (SAMPLE_DATE, concentration 180) is carried through
+      // alert-started-timestamp = oldest (SAMPLE_DATE)
+      // lastUpdatedFromRicardo  = newest (t3)
+      // concentration in state  = newest (182)
       expect(db._state.updateOne).toHaveBeenCalledWith(
         { 'alert-id': 500, 'alert-started-timestamp': SAMPLE_DATE },
         expect.objectContaining({
           $set: expect.objectContaining({
             'alert-started-timestamp': SAMPLE_DATE,
-            concentration: 180,
-            lastUpdatedFromRicardo: SAMPLE_DATE
+            concentration: 182,
+            lastUpdatedFromRicardo: t3
           })
         }),
         { upsert: true }
       )
+      // Notification personalisation still uses oldest (breach-start) concentration
       const concentrationsSent = sendNotification.mock.calls.map(
         (call) => call[0].personalisation.concentration
       )
@@ -607,7 +754,10 @@ describe('pollutantAlertProcessor', () => {
       expect(processedCalls).toHaveLength(0)
     })
 
-    it('logs a warning and continues when audit insert hits a duplicate key (11000)', async () => {
+    it('skips the re-send when audit insert hits a duplicate key (11000)', async () => {
+      // A duplicate audit row means this recipient was already notified for this
+      // alert-id on an earlier cycle. The audit unique index is the idempotency
+      // guard, so the notification must NOT be sent again.
       const db = makeDb()
       const dupError = Object.assign(new Error('E11000 duplicate key error'), {
         code: 11000
@@ -617,7 +767,7 @@ describe('pollutantAlertProcessor', () => {
       sendNotification.mockResolvedValue({ notificationId: 'notif-dup' })
 
       await expect(processPollutantAlerts(db)).resolves.not.toThrow()
-      expect(sendNotification).toHaveBeenCalledTimes(1)
+      expect(sendNotification).not.toHaveBeenCalled()
     })
 
     it('catches an outer error when audit insert fails with a non-11000 code', async () => {

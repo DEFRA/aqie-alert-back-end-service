@@ -17,12 +17,7 @@
  *
  * What this migration does
  * ------------------------
- *   1. Backfills `alert-started-timestamp` on every legacy doc that lacks it,
- *      derived from `processedAt` (→ `createdAt` → `lastUpdatedFromRicardo`).
- *      Stored as an ISO STRING (via $toString) so it sorts chronologically
- *      against the Ricardo date strings that Phase 2 rows write — the classifier
- *      sorts state rows by this field descending to pick the latest event.
- *   2. Drops the stale single-column unique index on `alert-id`. The compound
+ *   1. Drops the stale single-column unique index on `alert-id`. The compound
  *      `{ alert-id, alert-started-timestamp }` unique index (built by
  *      createIndexes) replaces it. Left in place, it would reject the second
  *      breach event for a samplingPointId (same alert-id, new timestamp).
@@ -42,10 +37,10 @@ import { createLogger } from '../common/helpers/logging/logger.js'
 const logger = createLogger()
 const COLLECTION = 'pollutant-alert-processing-state'
 const OLD_UNIQUE_INDEX = 'alert-id_1'
-const MIGRATION_NAME = 'migratePollutantStateToEventModel'
+const MIGRATION_NAME = 'dropStaleSingleColumnUniqueIndex'
 const INDEX_NOT_FOUND_CODE = 27
 
-export async function migratePollutantStateToEventModel(db) {
+export async function dropStaleSingleColumnUniqueIndex(db) {
   logger.info(
     `[Migration] ${MIGRATION_NAME}: checking for documents to migrate`
   )
@@ -53,37 +48,7 @@ export async function migratePollutantStateToEventModel(db) {
   try {
     const col = db.collection(COLLECTION)
 
-    // --- Step 1: backfill alert-started-timestamp on legacy docs -----------
-    const pending = await col.countDocuments({
-      'alert-started-timestamp': { $exists: false }
-    })
-
-    if (pending > 0) {
-      logger.info(
-        `[Migration] ${MIGRATION_NAME}: backfilling alert-started-timestamp on ${pending} legacy doc(s)`
-      )
-      await col.updateMany({ 'alert-started-timestamp': { $exists: false } }, [
-        {
-          $set: {
-            'alert-started-timestamp': {
-              $toString: {
-                $ifNull: [
-                  '$processedAt',
-                  '$createdAt',
-                  '$lastUpdatedFromRicardo'
-                ]
-              }
-            }
-          }
-        }
-      ])
-    } else {
-      logger.info(
-        `[Migration] ${MIGRATION_NAME}: no legacy docs need alert-started-timestamp`
-      )
-    }
-
-    // --- Step 2: drop the stale single-column unique index -----------------
+    // --- drop the stale single-column unique index -----------------
     try {
       await col.dropIndex(OLD_UNIQUE_INDEX)
       logger.info(

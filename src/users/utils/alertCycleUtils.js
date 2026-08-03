@@ -96,7 +96,7 @@ export function getMatchingUsers(users, alertRegion) {
  * @param {object} opts.alertDetail         resolved alert (with region)
  * @param {Array}  opts.matchedUsers        from getMatchingUsers()
  * @param {string} opts.logPrefix           e.g. '[DAQI]' / '[Pollutant]'
- * @param {Function} opts.insertAuditEntry  (db, alertDetail, userMatch) -> Promise
+ * @param {Function} opts.insertAuditEntry  (db, alertDetail, userMatch) -> Promise; resolves `false` when the audit row already exists (duplicate) so the send is skipped
  * @param {Function} opts.updateAuditEntry  (db, alertId, userContact, location, notificationId) -> Promise
  * @param {Function} opts.sendAlert         (userMatch, alertDetail) -> Promise<notificationId>
  * @returns {Promise<boolean>} true if all notifications were dispatched successfully
@@ -112,7 +112,16 @@ export async function sendNotificationsToUsers({
 }) {
   let allSent = true
   for (const userMatch of matchedUsers) {
-    await insertAuditEntry(db, alertDetail, userMatch)
+    const inserted = await insertAuditEntry(db, alertDetail, userMatch)
+    if (inserted === false) {
+      // Audit row already existed → this recipient was already notified for
+      // this alert-id on an earlier cycle. The unique audit index is the
+      // idempotency guard: skip the re-send rather than notifying again.
+      logger.info(
+        `${logPrefix} Skipping re-send for alert ${alertDetail['alert-id']} to ${userMatch.alertType} user, location ${userMatch.location} — already notified`
+      )
+      continue
+    }
     try {
       const notificationId = await sendAlert(userMatch, alertDetail)
       await updateAuditEntry(
