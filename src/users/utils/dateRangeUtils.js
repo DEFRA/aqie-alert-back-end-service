@@ -38,42 +38,4 @@ export function getRollingDayWindow() {
   }
 }
 
-/**
- * Adjusts an ISO timestamp by its own UTC offset so the returned time
- * reflects the local clock time at that offset.
- *
- * Ricardo returns timestamps like "2026-08-03T09:00:00+01:00". The "+01:00"
- * means the reading was recorded at 09:00 in a UTC+1 zone. Adding the offset
- * (1 hour) to the time gives 10:00 — the correct local display time.
- *
- * Timestamps with no offset (Z or bare datetime) are returned unchanged.
- * Timestamps with +00:00 are returned unchanged (no adjustment needed).
- */
-export function applyOffsetToTimestamp(isoString) {
-  if (!isoString) {
-    return isoString
-  }
-
-  const match = isoString.match(
-    /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})([+-])(\d{2}):(\d{2})$/
-  )
-  if (!match) {
-    return isoString
-  }
-
-  const [, datetimePart, sign, offsetHH, offsetMM] = match
-  const offsetMinutes =
-    (parseInt(offsetHH, 10) * 60 + parseInt(offsetMM, 10)) *
-    (sign === '+' ? 1 : -1)
-
-  if (offsetMinutes === 0) {
-    return isoString
-  }
-
-  const adjusted = new Date(datetimePart + 'Z')
-  adjusted.setUTCMinutes(adjusted.getUTCMinutes() + offsetMinutes)
-
-  return adjusted.toISOString().replace('.000Z', 'Z')
-}
-
 export { UK_DATE_FORMATTER, TWENTY_FOUR_HOURS_MS }

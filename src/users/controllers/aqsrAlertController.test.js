@@ -625,10 +625,9 @@ describe('aqsrAlertController', () => {
 
       const responseArg = mockH.response.mock.calls[0][0]
       expect(responseArg).toHaveLength(3)
-      // +01:00 offset is added to each time by applyOffsetToTimestamp
-      expect(responseArg[0]['alert-started']).toBe('2025-08-13T18:00:00Z')
-      expect(responseArg[1]['alert-started']).toBe('2025-07-11T20:00:00Z')
-      expect(responseArg[2]['alert-started']).toBe('2025-06-19T17:00:00Z')
+      expect(responseArg[0]['alert-started']).toBe(newest)
+      expect(responseArg[1]['alert-started']).toBe(middle)
+      expect(responseArg[2]['alert-started']).toBe(oldest)
     })
 
     it('should exclude alerts where breach is not confirmed', async () => {
