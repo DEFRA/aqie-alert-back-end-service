@@ -53,11 +53,9 @@ describe('index', () => {
       // Simulate the handler behavior
       mockLogger.info('Unhandled rejection')
       mockLogger.error(testError)
-      const exitCode = 1
 
       expect(mockLogger.info).toHaveBeenCalledWith('Unhandled rejection')
       expect(mockLogger.error).toHaveBeenCalledWith(testError)
-      expect(exitCode).toBe(1)
     })
   })
 })

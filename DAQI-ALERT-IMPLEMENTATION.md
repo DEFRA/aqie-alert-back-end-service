@@ -40,33 +40,41 @@ Both flows fetch from the same Ricardo DAQI endpoint, apply the same threshold/v
 
 Core scheduler business logic. Exported functions:
 
-| Function                                    | Description                                                                                                                                                            |
-| ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `processDaqiAlerts(db)`                     | **Main entry point** — orchestrates the full DAQI cycle (called by the scheduler)                                                                                      |
-| `filterValidDaqiAlerts(members, threshold)` | Keeps only members where `daqi >= threshold`, `validationStatus===2`, plus required `samplingPointId/siteId/date`. Maps to alert-detail shape with computed `alert-id` |
-| `getMatchingUsers(users, region)`           | Expands users to one entry per matching user-location pair                                                                                                             |
-| `getAlreadyProcessedAlertKeys(db)`          | Returns `Set<"samplingPointId-siteId-date">` of alerts with status `in-progress` or `processed`                                                                        |
-| `markAlertInProgress(db, alertDetail)`      | Upserts into `daqi-alert-processing-state` with `process-status: "in-progress"`                                                                                        |
-| `markAlertProcessed(db, alertDetail)`       | Updates the same record to `process-status: "processed"` once all notifications succeed                                                                                |
-| `sendAlertToUser(userMatch, alertDetail)`   | Builds and dispatches the Notify payload; returns `notificationId`                                                                                                     |
-| `buildAlertKey(member)`                     | Builds dedup key `${samplingPointId}-${siteId}-${date}`                                                                                                                |
-| `getDaqiAlertWindow()`                      | Returns `{ startDate, endDate }` in UK-local `YYYY-MM-DD` — yesterday + today                                                                                          |
+| Function                                    | Description                                                                                                                                                                    |
+| ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `processDaqiAlerts(db)`                     | **Main entry point** — orchestrates the full DAQI cycle (called by the scheduler)                                                                                              |
+| `filterValidDaqiAlerts(members, threshold)` | Keeps only members where `daqi >= threshold`, `validationStatus===2`, plus required `samplingPointId/siteId/date`. Maps to alert-detail shape with computed `alert-id`         |
+| `buildLatestDaqiReadingMap(alerts)`         | Builds a `Map<samplingPointId, {date, daqi}>` of the NEWEST pre-dedup reading, so state writes reflect Ricardo's latest measurement rather than the dedup breach-start reading |
+| `getMatchingUsers(users, region)`           | Expands users to one entry per matching user-location pair (re-exported from `alertCycleUtils.js`)                                                                             |
+| `classifyAlert(existingRow, now)`           | Returns `'new'` / `'update-only'` / `'skip-stuck'` — the 24h sliding-window verdict anchored on `lastUpdatedFromRicardo`                                                       |
+| `markAlertInProgress(db, alertDetail)`      | Upserts a NEW event row into `daqi-alert-processing-state` (compound key `{samplingPointId, alert-started-timestamp}`) with `process-status: "in-progress"`                    |
+| `markAlertProcessed(db, alertDetail)`       | Updates the same event row to `process-status: "processed"` once all notifications succeed                                                                                     |
+| `sendAlertToUser(userMatch, alertDetail)`   | Builds and dispatches the Notify payload; returns `notificationId`                                                                                                             |
+| `buildAlertKey(member)`                     | Builds the audit-side key `${samplingPointId}-${siteId}-${date}` (see "Alert identity / dedup keys" below)                                                                     |
 
-**Alert identity / dedup key**
+`updateStateForExistingAlert`, `insertDaqiAuditEntry`, `updateDaqiAuditEntry`, `enrichAlertWithLatestReading`, `getDaqiLabel`/`getDaqiLabelTitle`, and `loadRecentStateRowsBySamplingPointId` are internal (not exported) but referenced throughout this document.
+
+**Alert identity / dedup keys**
+
+There are two distinct keys, serving different purposes:
 
 ```
-alert-id = `${samplingPointId}-${siteId}-${date}`
+alert-id (audit correlation)   = `${samplingPointId}-${siteId}-${date}`   — buildAlertKey()
+state key (event dedup)        = { samplingPointId, 'alert-started-timestamp' }
 ```
 
-The same `(samplingPointId, siteId, date)` row can repeat in a single Ricardo response — both the in-cycle dedup loop and the MongoDB unique index on `daqi-alert-processing-state` enforce single-processing.
+- **`alert-id`** identifies a _specific Ricardo reading_ and is stored on every `daqi-alerts-audit` row so it traces back to the exact payload that triggered it. It includes `date`, so two readings of the same physical breach get distinct audit identifiers.
+- **The state key** identifies a _breach event_ in `daqi-alert-processing-state`. It is `{samplingPointId, 'alert-started-timestamp'}` — deliberately excluding `siteId`/`date` — so that as long as Ricardo keeps reporting this `samplingPointId` at least once every 24 hours, all those readings collapse onto the same event document — this is the 24h sliding-window rule `classifyAlert` enforces (see the Step-by-Step flow below). The unique index on this collection is `samplingPointId_alertStarted_unique`.
+
+The same `(samplingPointId, siteId, date)` row can repeat within a single Ricardo response — `deduplicateAlertsOldestFirst` collapses these before per-alert processing runs.
 
 **Cycle-level guards** (in execution order):
 
 1. Empty Ricardo response → log and exit
 2. Zero alerts pass `filterValidDaqiAlerts` → exit
-3. After deduping vs `daqi-alert-processing-state`, zero new alerts → exit
-4. After collapsing duplicate rows within this Ricardo response, zero unique alerts → exit
-5. Site cache is empty AND on-demand `ensureSiteCachePopulated()` fails → skip cycle (don't mask the upstream outage as "no alerts")
+3. Collapse duplicate rows within this Ricardo response (`deduplicateAlertsOldestFirst`) → build the unique-candidate list
+4. Site cache is empty AND on-demand `ensureSiteCachePopulated()` fails → skip cycle entirely (don't mask the upstream outage as "no alerts")
+5. Per-candidate: `classifyAlert` returns `'skip-stuck'` for a combo a prior cycle left `in-progress` (crashed mid-cycle) → skip with a warning, needs manual review
 6. Per-alert: siteId not in site cache → skip that alert with a warning (leave unprocessed so next cycle can retry)
 
 ### 2. `src/users/controllers/daqiAlertController.js`
@@ -190,28 +198,35 @@ The same rule is enforced in the pollutant alert flow (`pollutantAlertProcessor.
 ### Scheduler — `processDaqiAlerts(db)`
 
 ```
-1. getDaqiAlertWindow()              — yesterday + today (UK local YYYY-MM-DD)
-2. fetchDaqiAlerts({ startDate, endDate })
-   ├─ on throw → log with upstreamStatus, return (next cron tick retries)
+1. fetchDaqiAlertsForCycle()         — getRollingDayWindow() [yesterday+today UK-local] then fetchDaqiAlerts()
+   ├─ on throw → log with upstreamStatus, return null (cycle aborts, next cron tick retries)
    └─ on empty member array → log "No alert members", return
-3. filterValidDaqiAlerts(members, threshold)
-   └─ keep only: daqi >= threshold && validationStatus===2 && samplingPointId/siteId/date present
-4. getAlreadyProcessedAlertKeys(db)  — Set of (samplingPointId-siteId-date) keys with in-progress/processed status
-5. Drop already-processed; collapse duplicate rows within this Ricardo response
-6. Cache health gate:
+2. filterValidDaqiAlerts(members, threshold)
+   └─ keep only: daqi >= threshold && validationStatus===2 && samplingPointId/siteId/date present && isWithinLast24Hours(date)
+   └─ empty result → return
+3. buildLatestDaqiReadingMap(validAlerts)   — snapshot NEWEST {date, daqi} per samplingPointId from the pre-dedup list
+4. deduplicateAlertsOldestFirst(validAlerts, 'daqi')  — collapse rows sharing a samplingPointId; oldest date wins (breach-started time), highest daqi breaks ties
+5. ensureCacheReadyForCycle('[DAQI]')      — cache health gate
    └─ if getSiteCacheSize() === 0: ensureSiteCachePopulated()
       └─ if still empty: log and skip cycle entirely
-7. For each unique new alert:
-   a. getRegionForSite(siteId)       — O(1) site cache lookup
-      └─ if not in cache: warn, skip alert (try again next cycle)
-   b. markAlertInProgress(db)        — upsert into daqi-alert-processing-state
-   c. Query USERS where locations.region == resolvedRegion
-   d. getMatchingUsers()             — expand to one entry per user-location pair
-   e. For each user-location pair:
-      - insertDaqiAuditEntry()       — daqi-alerts-audit row, status not-processed
-      - sendAlertToUser()            — Notify API call
-      - updateDaqiAuditEntry()       — status processed + notificationId
-   f. If all notifications succeeded → markAlertProcessed()
+6. loadRecentStateRowsBySamplingPointId(db, uniqueCandidates)  — one bulk read of the latest state row per samplingPointId
+7. For each unique candidate:
+   a. enrichAlertWithLatestReading()  — attaches latestRicardoDate/latestRicardoDaqi from step 3, so state writes reflect Ricardo's newest reading rather than the (older) dedup breach-start values
+   b. classifyAlert(existingRow, now):
+      - 'skip-stuck'  → prior cycle left it in-progress (crashed) → log warning, skip (needs manual review)
+      - 'update-only' → last Ricardo reading within 24h → updateStateForExistingAlert() (bump lastUpdatedFromRicardo/daqi from the enriched values, no notify)
+      - 'new'         → no row, or quiet >24h → processAlertForUsers():
+          i.   getRegionForSite(siteId)       — O(1) site cache lookup; siteId miss → skip with info log (retry next cycle)
+          ii.  markAlertInProgress(db)        — upsert NEW event row (compound key samplingPointId + alert-started-timestamp)
+          iii. Query USERS where locations.region == resolvedRegion
+          iv.  getMatchingUsers()             — expand to one entry per user-location pair
+          v.   sendNotificationsToUsers() (alertCycleUtils.js), for each user-location pair:
+               - insertDaqiAuditEntry()       — daqi-alerts-audit row, status not-processed; on duplicate-key (11000) resolves to `false` instead of throwing
+               - if `false`                   — already notified on an earlier cycle; log and skip the re-send (no Notify call)
+               - otherwise: sendAlertToUser() — Notify API call
+               - updateDaqiAuditEntry()       — status processed + notificationId
+          vi.  If all notifications succeeded → markAlertProcessed()
+8. Log cycle summary: counts of 'new' / 'update-only' / 'skip-stuck' verdicts
 ```
 
 ### Endpoint — `GET /daqi-alert?lat=…&long=…`
@@ -245,24 +260,22 @@ Tracks which DAQI breaches have been seen/processed across cron cycles so a repe
 ```json
 {
   "_id": "ObjectId",
-  "alert-id": "12340-UKA00212-2026-05-20T03:00:00+01:00",
   "samplingPointId": 12340,
   "siteId": "UKA00212",
-  "date": "2026-05-20T03:00:00+01:00",
-  "daqi": 7,
-  "region": "Northern Ireland",
   "pollutant": "NO<sub>2</sub> (NO2)",
+  "daqi": 9,
+  "region": "Northern Ireland",
   "process-status": "processed",
-  "alert-started-timestamp": "2026-05-20T03:05:00.000Z",
-  "processedAt": "2026-05-20T03:05:01.842Z"
+  "alert-started-timestamp": "2026-05-20T03:00:00+01:00",
+  "lastUpdatedFromRicardo": "2026-05-20T04:15:00+01:00"
 }
 ```
 
-`alert-id` is the same composite key (`${samplingPointId}-${siteId}-${date}`) used by `daqi-alerts-audit`, so a row in either collection can be joined to the matching row in the other by a single field. The unique index is still on `{ samplingPointId, siteId, date }` since `alert-id` is purely a derived/denormalised view of those three.
+`alert-started-timestamp` is set once, from the OLDEST reading kept by `deduplicateAlertsOldestFirst` (the breach-start time), and is one half of the unique compound key. `daqi` and `lastUpdatedFromRicardo` are instead kept current on every cycle from the NEWEST pre-dedup reading (via `buildLatestDaqiReadingMap`/`enrichAlertWithLatestReading`), so they always reflect Ricardo's latest measurement rather than the breach-start values. Each distinct breach event (separated by a >24h quiet gap from Ricardo) gets its own document; a repeat within 24h updates `lastUpdatedFromRicardo`/`daqi` on the same document without re-notifying (`classifyAlert` → `'update-only'`).
 
 **Indexes:**
 
-- Unique compound on `{ samplingPointId, siteId, date }` — enforces single-processing of a breach within and across cycles
+- Unique compound on `{ samplingPointId, 'alert-started-timestamp' }` (name: `samplingPointId_alertStarted_unique`) — one document per breach event; a beyond-24h gap starts a new event with a new `alert-started-timestamp`
 
 ### `daqi-alerts-audit` (new)
 
@@ -310,6 +323,15 @@ Sent to `aqie-notify-service` `POST /send-notification`.
 | `email`   | `en` | `daqiAlertTemplates.emailAlert`   | `EMAIL_DAQI_ALERT_TEMPLATE_ID`    |
 | `email`   | `cy` | `daqiAlertTemplates.emailAlertCy` | `EMAIL_DAQI_ALERT_CY_TEMPLATE_ID` |
 
+**DAQI level label (`getDaqiLabel` / `getDaqiLabelTitle`)**
+
+The payload does not send the raw numeric `daqi` value or a pollutant name — it sends a severity label derived from the daqi value:
+
+| `alertDetail.daqi`                            | `daqi-level`  | `daqi-level-title` |
+| --------------------------------------------- | ------------- | ------------------ |
+| `7`–`9`                                       | `"high"`      | `"High"`           |
+| `>= 10` (`DAQI_VERY_HIGH_THRESHOLD` constant) | `"very high"` | `"Very high"`      |
+
 **SMS:**
 
 ```json
@@ -319,8 +341,8 @@ Sent to `aqie-notify-service` `POST /send-notification`.
   "alertId": "12340-UKA00212-2026-05-20T03:00:00+01:00",
   "personalisation": {
     "location": "Belfast",
-    "daqi": "7",
-    "Pollutant": "nitrogen dioxide (NO2)",
+    "daqi-level": "high",
+    "daqi-level-title": "High",
     "checkAirQualityLink": "https://check-air-quality.service.gov.uk/location/belfast?lang=en"
   }
 }
@@ -335,8 +357,8 @@ Sent to `aqie-notify-service` `POST /send-notification`.
   "alertId": "12340-UKA00212-2026-05-20T03:00:00+01:00",
   "personalisation": {
     "location": "Belfast",
-    "daqi": "7",
-    "Pollutant": "nitrogen dioxide (NO2)",
+    "daqi-level": "high",
+    "daqi-level-title": "High",
     "checkAirQualityLink": "https://check-air-quality.service.gov.uk/location/belfast?lang=en",
     "unsubscribeLink": "https://.../unsubscribe-email-link?email=user%40example.com"
   }
@@ -413,17 +435,20 @@ Plus all the inherited `RICARDO_API_*`, `NOTIFICATION_SERVICE_URL`, and `CHECK_A
 
 ## Error Handling Summary
 
-| Failure point                                  | Behaviour                                                                                                                           |
-| ---------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| Ricardo DAQI fetch throws (scheduler)          | Logs with structured `upstreamStatus` (HTTP status, or `null` for network/timeout). Cycle aborts; next cron tick (15 min) retries.  |
-| Ricardo DAQI fetch throws (`/daqi-alert`)      | `mapUpstreamError` returns the upstream status (4xx→4xx, 5xx→5xx, network→502) with `upstreamStatus` in the response body.          |
-| No member array / empty list                   | Logs info, exits cleanly                                                                                                            |
-| Site cache empty + refresh fails (scheduler)   | Logs "site cache empty…skipping cycle", exits. Avoids masking an outage as "no alerts".                                             |
-| Site cache empty + refresh fails (endpoint)    | Responds with `[]`. `regionResolver` returns `null` to signal the caller.                                                           |
-| siteId not in cache (per-alert)                | Warning log, alert is skipped this cycle, **left in `not-processed` state** so a later cycle can retry once the cache catches up    |
-| Individual notification fails                  | Logs error, audit entry stays `not-processed`, `allSent` flips to false — `daqi-alert-processing-state` is **not** marked processed |
-| Duplicate audit insert (`DB_ERROR_CODE` 11000) | Logs warning, skips insert, continues                                                                                               |
-| Service restarts between ticks                 | Immediate startup run catches any unprocessed alerts; `daqi-alert-processing-state` prevents re-processing already-sent ones        |
+| Failure point                                         | Behaviour                                                                                                                                                                                                                                                                                         |
+| ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Ricardo DAQI fetch throws (scheduler)                 | Logs with structured `upstreamStatus` (HTTP status, or `null` for network/timeout). Cycle aborts; next cron tick (15 min) retries.                                                                                                                                                                |
+| Ricardo DAQI fetch throws (`/daqi-alert`)             | `mapUpstreamError` returns the upstream status (4xx→4xx, 5xx→5xx, network→502) with `upstreamStatus` in the response body.                                                                                                                                                                        |
+| No member array / empty list                          | Logs info, exits cleanly                                                                                                                                                                                                                                                                          |
+| Site cache empty + refresh fails (scheduler)          | Logs "site cache empty…skipping cycle", exits. Avoids masking an outage as "no alerts".                                                                                                                                                                                                           |
+| Site cache empty + refresh fails (endpoint)           | Responds with `[]`. `regionResolver` returns `null` to signal the caller.                                                                                                                                                                                                                         |
+| siteId not in cache (per-alert)                       | Warning log, alert is skipped this cycle, **left in `not-processed` state** so a later cycle can retry once the cache catches up                                                                                                                                                                  |
+| Individual notification fails                         | Logs error, audit entry stays `not-processed`, `allSent` flips to false — `daqi-alert-processing-state` is **not** marked processed                                                                                                                                                               |
+| Duplicate audit insert (`DB_ERROR_CODE` 11000)        | `insertDaqiAuditEntry` logs a warning and resolves `false` instead of throwing; `sendNotificationsToUsers` (in `alertCycleUtils.js`) treats `false` as "already notified" and skips the re-send (and the Notify call) for that recipient                                                          |
+| Combo left `in-progress` by a crashed cycle           | `classifyAlert` returns `'skip-stuck'` — logged as a warning, skipped, needs manual review (the row is never auto-recovered)                                                                                                                                                                      |
+| Combo confirmed by Ricardo within 24h                 | `classifyAlert` returns `'update-only'` — `lastUpdatedFromRicardo`/`daqi` are bumped from the latest reading, no re-notification                                                                                                                                                                  |
+| Legacy BSON-Date rows (`daqi-alert-processing-state`) | Not applicable to this collection — `loadRecentStateRowsBySamplingPointId` uses a Mongo `.sort()` on `alert-started-timestamp`, which is always written as an ISO string here. (Contrast with the pollutant flow — see [POLLUTANT-ALERT-IMPLEMENTATION.md](./POLLUTANT-ALERT-IMPLEMENTATION.md).) |
+| Service restarts between ticks                        | Immediate startup run catches any unprocessed alerts; `daqi-alert-processing-state` prevents re-processing already-sent ones                                                                                                                                                                      |
 
 Failed `not-processed` entries in `daqi-alerts-audit` are the evidence trail for manual investigation. No automatic retry is performed beyond the next scheduled cron tick.
 
@@ -433,38 +458,49 @@ Failed `not-processed` entries in `daqi-alerts-audit` are the evidence trail for
 Cron tick (every 15m)
    │
    ▼
-processDaqiAlerts(db) ────────► getDaqiAlertWindow()    [UK-local yesterday/today]
+processDaqiAlerts(db) ─────────► getRollingDayWindow()   [UK-local yesterday/today]
    │                                       │
    ▼                                       ▼
-Ricardo /api/daqi_alerts ────► response { member: [...] }
+Ricardo /api/daqi_alerts ─────► response { member: [...] }
    │
    ▼
-filterValidDaqiAlerts ────────► [valid alerts: daqi≥threshold, validated]
+filterValidDaqiAlerts ─────────► [valid alerts: daqi≥threshold, validated, within 24h]
    │
    ▼
-daqi-alert-processing-state ──► [already-processed keys]
+buildLatestDaqiReadingMap ─────► [newest {date, daqi} per samplingPointId, pre-dedup]
    │
    ▼
-[dedup + collapse duplicate rows]
+deduplicateAlertsOldestFirst ──► [unique candidates: oldest date wins, highest daqi tie-break]
    │
    ▼
-getSiteCacheSize() === 0?
-   │      yes → ensureSiteCachePopulated() → still 0? → exit
+ensureCacheReadyForCycle?
+   │      site cache empty → ensureSiteCachePopulated() → still empty? → exit
    │
    ▼
-for each unique alert:
+loadRecentStateRowsBySamplingPointId ─► [latest state row per samplingPointId]
+   │
+   ▼
+for each unique candidate:
+   │
+   ├─► enrichAlertWithLatestReading(candidate)
+   │
+   ├─► classifyAlert(existingRow, now)
+   │      ├─ 'skip-stuck'  → warn, skip (needs manual review)
+   │      ├─ 'update-only' → updateStateForExistingAlert (bump lastUpdatedFromRicardo/daqi, no notify)
+   │      └─ 'new' ↓
    │
    ├─► getRegionForSite(siteId)
-   │      └─ not in cache? warn + skip alert (retry next cycle)
+   │      └─ not in cache? info log + skip alert (retry next cycle)
    │
-   ├─► markAlertInProgress(db, alertDetail)
+   ├─► markAlertInProgress(db, enrichedDetail)
    │
    ├─► USERS.find({ 'locations.region': region })
    │
-   ├─► for each user-location pair:
+   ├─► for each user-location pair (sendNotificationsToUsers):
    │      ├─► insertDaqiAuditEntry → daqi-alerts-audit (status: not-processed)
+   │      │      └─ duplicate (11000)? → resolves false → skip re-send, no Notify call
    │      ├─► sendAlertToUser → Notify API
    │      └─► updateDaqiAuditEntry → status: processed, notificationId
    │
-   └─► if all sent successfully → markAlertProcessed(db, alertDetail)
+   └─► if all sent successfully → markAlertProcessed(db, enrichedDetail)
 ```

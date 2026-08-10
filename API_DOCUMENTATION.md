@@ -207,6 +207,7 @@ GET /aqsr-alert?current-day=true&lat=51.4818&long=-3.1763
 2. All monitoring site IDs for that region are retrieved from the in-memory site-region cache
 3. The Ricardo AQSR alerts feed is fetched with `start-date` = yesterday's UK-local date (`Europe/London`) and `end-date` = today's UK-local date (both `yyyy-mm-dd`), narrowing the upstream response to the rolling 24-hour window. When `RICARDO_API_USE_MOCK=true`, the mock response is returned to the caller after the real call is logged.
 4. Alerts are filtered to those where the site ID matches the region's sites, the alert is confirmed (`alertLevel=true` or `informationLevel=true`), and the date is within the last 24 hours (precise millisecond check)
+5. Each alert's `alert-started` timestamp is Ricardo's `date` value, returned unmodified
 
 ---
 
@@ -257,7 +258,7 @@ GET /aqsr-alert?start-date=2026-05-01&end-date=2026-05-08
 | `concentration`           | number \| null | Measured pollutant concentration for the breach, as reported by Ricardo; `null` if absent in the upstream record     |
 | `monitoring-station-name` | string \| null | Name of the monitoring station from Ricardo site metadata; `null` if not cached                                      |
 | `region`                  | string \| null | Region resolved from the site's coordinates; `null` if not in cache                                                  |
-| `alert-started`           | string         | ISO 8601 timestamp when the alert was recorded by Ricardo                                                            |
+| `alert-started`           | string         | Ricardo's alert timestamp (`date`), returned unmodified — same as `/daqi-alert`                                      |
 
 **Validation errors (400):**
 

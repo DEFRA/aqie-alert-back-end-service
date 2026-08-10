@@ -82,7 +82,7 @@ describe('validateContactInfo', () => {
   it('should validate SMS alert with valid mobile number', () => {
     const result = validateContactInfo('sms', '07896543210', null)
     expect(result.isValid).toBe(true)
-    expect(result.error).toBe(null)
+    expect(result.error).toBeNull()
   })
 
   it('should reject SMS alert with invalid phone number', () => {
@@ -100,7 +100,7 @@ describe('validateContactInfo', () => {
   it('should validate email alert with valid email', () => {
     const result = validateContactInfo('email', null, 'test@example.com')
     expect(result.isValid).toBe(true)
-    expect(result.error).toBe(null)
+    expect(result.error).toBeNull()
   })
 
   it('should reject email alert with invalid email', () => {

@@ -107,6 +107,8 @@ Core business logic. Exported functions:
 | `markAlertProcessed(db, alertDetail)`                       | Flips the same event row to `status: "processed"`                                                                                                                                                                                               |
 | `updateStateForExistingAlert(db, alertDetail, existingRow)` | Bumps `lastUpdatedFromRicardo`/`concentration` on an in-window event row without re-notifying                                                                                                                                                   |
 | `sendAlertToUser(userMatch, alertDetail)`                   | Builds and dispatches the notification payload; returns `notificationId`                                                                                                                                                                        |
+| `buildLatestReadingMap(alerts)`                             | Builds a `Map<samplingPointId, {date, concentration}>` of the NEWEST pre-dedup reading, so state writes reflect Ricardo's latest measurement rather than the dedup breach-start reading                                                         |
+| `loadRecentStateRowsByAlertId(db, candidates)`              | Bulk-loads the latest state row per samplingPointId (`alert-id`), selecting "latest" via `toEpochMs()` comparison in JS rather than a Mongo `.sort()` — see below                                                                               |
 
 **Pollutant name mapping**
 
@@ -132,22 +134,30 @@ If the code is unrecognised the cleaned string (HTML stripped) is returned as-is
 ```
 1. fetchAlerts()                     — get fresh token, fetch Ricardo API (defaults to yesterday→today UK-local window)
 2. filterValidAlerts()               — keep validationStatus==2 && (alertLevel||informationLevel) && isWithinLast24Hours(date)
-3. deduplicateAlertsOldestFirst(_, 'concentration') — collapse rows sharing a samplingPointId; oldest date wins (breach-started time), highest concentration breaks ties
-4. loadRecentStateRowsByAlertId()    — bulk-load the latest state row per samplingPointId (alert-id), sorted by alert-started-timestamp desc
-5. For each unique candidate: classifyAlert(existingRow, now):
+3. buildLatestReadingMap(validAlerts) — snapshot the NEWEST { date, concentration } per samplingPointId from the pre-dedup list
+4. deduplicateAlertsOldestFirst(_, 'concentration') — collapse rows sharing a samplingPointId; oldest date wins (breach-started time), highest concentration breaks ties
+5. loadRecentStateRowsByAlertId()    — bulk-load the latest state row per samplingPointId (alert-id)
+6. For each unique candidate:
+   a. enrichAlertWithLatestReading()  — attaches latestRicardoDate/latestRicardoConcentration from step 3, so state writes reflect Ricardo's newest reading rather than the (older) dedup breach-start values
+   b. classifyAlert(existingRow, now):
    - 'skip-stuck'  → prior cycle left it in-progress (crashed) → skip
-   - 'update-only' → last Ricardo reading within 24h → updateStateForExistingAlert() (bump lastUpdatedFromRicardo, no notify)
+   - 'update-only' → last Ricardo reading within 24h → updateStateForExistingAlert() (bump lastUpdatedFromRicardo/concentration from the enriched values, no notify)
    - 'new'         → no row, or quiet >24h → processAlertForUsers():
        a. getRegionForSite(siteId)       — O(1) cache lookup; siteId miss → skip (retry next cycle); never trust Ricardo's region
        b. markAlertInProgress()          — upsert NEW event row (compound key alert-id + alert-started-timestamp)
        c. Query USERS where locations.region == resolvedRegion
        d. getMatchingUsers()             — expand to one entry per matching location
-       e. For each user-location pair:
-          - insertPollutantAuditEntry()  — audit record (not-processed), composite alert-id; duplicate-key (11000) logged and skipped
-          - sendAlertToUser()            — build payload, call notifyServiceClient
+       e. For each user-location pair (via sendNotificationsToUsers in alertCycleUtils.js):
+          - insertPollutantAuditEntry()  — audit record (not-processed), composite alert-id; on duplicate-key (11000) resolves to `false` instead of throwing
+          - if `false`                   — recipient already notified for this alert-id on an earlier cycle; log and skip the re-send (no notifyServiceClient call)
+          - otherwise: sendAlertToUser() — build payload, call notifyServiceClient
           - updatePollutantAuditEntry()  — mark audit record processed + notificationId
        f. If ALL notifications succeeded → markAlertProcessed()
 ```
+
+**`loadRecentStateRowsByAlertId` — BSON Date vs ISO string bug fix**
+
+State rows are selected as "most recent per samplingPointId" by comparing `alert-started-timestamp` values in JavaScript via a `toEpochMs()` helper, **not** via a MongoDB `.sort()`. The one-off `addAlertStartedTimestampToState` migration wrote this field as a BSON `Date`, while runtime code writes it as an ISO string. MongoDB's cross-type sort orders every `Date` after every `String`, so `.sort({ 'alert-started-timestamp': -1 })` would surface a stale `Date`-typed legacy row as "most recent" — its expired `lastUpdatedFromRicardo` then makes `classifyAlert` return `'new'` every cycle and re-notify users indefinitely. `toEpochMs()` normalises both shapes to epoch milliseconds before comparing, so classification is based on actual chronological order regardless of which write path produced the row.
 
 ---
 
@@ -619,14 +629,14 @@ Scheduler       RicardoApiClient     MongoDB                   NotifyService
 
 ## Error Handling Summary
 
-| Failure point                                     | Behaviour                                                                                                                                                             |
-| ------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GET /aqsr_alerts` throws                         | Logs error with structured `upstreamStatus` field (HTTP status from Ricardo, or `null` for network/timeout). Cycle stops, next run at next cron tick                  |
-| No valid alerts after filter                      | Logs info, cycle stops                                                                                                                                                |
-| All alerts already processed                      | Logs info, cycle stops immediately                                                                                                                                    |
-| Duplicate samplingPointId rows in single response | Collapsed before the for-loop (first-occurrence wins); each alert-id is processed exactly once per cycle, so Notify is called exactly once per matching user-location |
-| Individual notification fails                     | Logs error, audit entry stays `not-processed`, `allSent` set to false — `pollutant-alert-processing-state` not marked processed                                       |
-| Duplicate audit insert (code 11000)               | Logs warning, skips insert, continues — defensive layer; should rarely fire now that same-cycle dedup runs upstream                                                   |
-| Service restarts between ticks                    | Immediate startup run catches any unprocessed alerts; `pollutant-alert-processing-state` prevents re-processing already-sent ones                                     |
+| Failure point                                     | Behaviour                                                                                                                                                                                                                                                                                                                                     |
+| ------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /aqsr_alerts` throws                         | Logs error with structured `upstreamStatus` field (HTTP status from Ricardo, or `null` for network/timeout). Cycle stops, next run at next cron tick                                                                                                                                                                                          |
+| No valid alerts after filter                      | Logs info, cycle stops                                                                                                                                                                                                                                                                                                                        |
+| All alerts already processed                      | Logs info, cycle stops immediately                                                                                                                                                                                                                                                                                                            |
+| Duplicate samplingPointId rows in single response | Collapsed before the for-loop (first-occurrence wins); each alert-id is processed exactly once per cycle, so Notify is called exactly once per matching user-location                                                                                                                                                                         |
+| Individual notification fails                     | Logs error, audit entry stays `not-processed`, `allSent` set to false — `pollutant-alert-processing-state` not marked processed                                                                                                                                                                                                               |
+| Duplicate audit insert (code 11000)               | `insertPollutantAuditEntry` logs a warning and resolves `false` instead of throwing; `sendNotificationsToUsers` (in `alertCycleUtils.js`) treats `false` as "already notified" and skips the re-send (and the `sendAlertToUser`/notify call) for that recipient — defensive layer; should rarely fire now that same-cycle dedup runs upstream |
+| Service restarts between ticks                    | Immediate startup run catches any unprocessed alerts; `pollutant-alert-processing-state` prevents re-processing already-sent ones                                                                                                                                                                                                             |
 
 Failed `not-processed` entries in `pollutant-alerts-audit` are the evidence trail for manual investigation. No automatic retry is performed.

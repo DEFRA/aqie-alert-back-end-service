@@ -48,12 +48,13 @@ describe('locationUtils', () => {
     })
 
     it('should handle null/undefined', () => {
-      expect(normalizeLocation(null)).toBe(null)
-      expect(normalizeLocation(undefined)).toBe(undefined)
+      expect(normalizeLocation(null)).toBeNull()
+      expect(normalizeLocation(undefined)).toBeUndefined()
     })
 
     it('should handle non-string input', () => {
-      expect(normalizeLocation(123)).toBe(123)
+      const input = 123
+      expect(Object.is(normalizeLocation(input), input)).toBe(true)
     })
   })
 

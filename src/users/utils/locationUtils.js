@@ -6,8 +6,9 @@ const MAX_LOCATION_LENGTH = 500
 /**
  * Normalizes location names for consistent comparison and storage
  * Preserves full location context (e.g., "London, City of Westminster" vs "London Apprentice, Cornwall")
- * @param {string} location - The location string to normalize
- * @returns {string} - Normalized location string
+ * Non-string input is returned unchanged.
+ * @param {*} location - The location string to normalize
+ * @returns {*} - Normalized location string, or the original value if not a string
  */
 export function normalizeLocation(location) {
   if (!location || typeof location !== 'string') {
