@@ -127,25 +127,17 @@ describe('mapUpstreamError', () => {
   })
 
   describe('Service name in messages', () => {
-    it('should include the service name in 4xx message', () => {
-      const result = mapUpstreamError(
-        buildUpstreamError(401),
-        'Custom Service Name'
-      )
-      expect(result.message).toBe('Custom Service Name rejected the request')
-    })
-
-    it('should include the service name in 5xx message', () => {
-      const result = mapUpstreamError(
-        buildUpstreamError(500),
-        'Custom Service Name'
-      )
-      expect(result.message).toBe('Custom Service Name upstream error')
-    })
-
-    it('should include the service name in 502 fallback message', () => {
-      const result = mapUpstreamError(new Error('boom'), 'Custom Service Name')
-      expect(result.message).toBe('Custom Service Name temporarily unavailable')
+    it.each([
+      ['4xx message', () => buildUpstreamError(401), 'rejected the request'],
+      ['5xx message', () => buildUpstreamError(500), 'upstream error'],
+      [
+        '502 fallback message',
+        () => new Error('boom'),
+        'temporarily unavailable'
+      ]
+    ])('should include the service name in %s', (_label, buildErr, suffix) => {
+      const result = mapUpstreamError(buildErr(), 'Custom Service Name')
+      expect(result.message).toBe(`Custom Service Name ${suffix}`)
     })
   })
 })

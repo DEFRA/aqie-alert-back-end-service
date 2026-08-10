@@ -15,10 +15,10 @@ describe('maskingUtils', () => {
     })
 
     it('should handle edge cases', () => {
-      expect(maskPhoneNumber('')).toBe(null)
-      expect(maskPhoneNumber(null)).toBe(null)
-      expect(maskPhoneNumber(undefined)).toBe(null)
-      expect(maskPhoneNumber(123456789)).toBe(null)
+      expect(maskPhoneNumber('')).toBeNull()
+      expect(maskPhoneNumber(null)).toBeNull()
+      expect(maskPhoneNumber(undefined)).toBeNull()
+      expect(maskPhoneNumber(123456789)).toBeNull()
     })
 
     it('should handle very long numbers', () => {
@@ -45,10 +45,10 @@ describe('maskingUtils', () => {
     })
 
     it('should handle edge cases', () => {
-      expect(maskEmail('')).toBe(null)
-      expect(maskEmail(null)).toBe(null)
-      expect(maskEmail(undefined)).toBe(null)
-      expect(maskEmail(12345)).toBe(null)
+      expect(maskEmail('')).toBeNull()
+      expect(maskEmail(null)).toBeNull()
+      expect(maskEmail(undefined)).toBeNull()
+      expect(maskEmail(12345)).toBeNull()
     })
 
     it('should handle complex email addresses', () => {
@@ -75,10 +75,10 @@ describe('maskingUtils', () => {
     })
 
     it('should handle edge cases', () => {
-      expect(maskTemplateId('')).toBe(null)
-      expect(maskTemplateId(null)).toBe(null)
-      expect(maskTemplateId(undefined)).toBe(null)
-      expect(maskTemplateId(123456789)).toBe(null)
+      expect(maskTemplateId('')).toBeNull()
+      expect(maskTemplateId(null)).toBeNull()
+      expect(maskTemplateId(undefined)).toBeNull()
+      expect(maskTemplateId(123456789)).toBeNull()
     })
 
     it('should handle very long template IDs', () => {
@@ -93,9 +93,9 @@ describe('maskingUtils', () => {
       const nonStringInputs = [123, true, false, [], {}, Symbol('test')]
 
       nonStringInputs.forEach((input) => {
-        expect(maskPhoneNumber(input)).toBe(null)
-        expect(maskEmail(input)).toBe(null)
-        expect(maskTemplateId(input)).toBe(null)
+        expect(maskPhoneNumber(input)).toBeNull()
+        expect(maskEmail(input)).toBeNull()
+        expect(maskTemplateId(input)).toBeNull()
       })
     })
   })

@@ -522,19 +522,15 @@ export async function processDaqiAlerts(db) {
       logger.info(
         `[DAQI] Skipping samplingPointId ${alertDetail.samplingPointId}: prior cycle left it in-progress (likely crashed mid-process — manual review needed)`
       )
-      continue
-    }
-
-    if (verdict === 'update-only') {
+    } else if (verdict === 'update-only') {
       await updateStateForExistingAlert(db, enrichedDetail, existing)
       logger.info(
         `[DAQI] Update-only for samplingPointId ${alertDetail.samplingPointId} (last Ricardo reading at ${existing.lastUpdatedFromRicardo}, within 24h)`
       )
-      continue
+    } else {
+      // verdict === 'new'
+      await processAlertForUsers(db, enrichedDetail)
     }
-
-    // verdict === 'new'
-    await processAlertForUsers(db, enrichedDetail)
   }
 
   logger.info(
