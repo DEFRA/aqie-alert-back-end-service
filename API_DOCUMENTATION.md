@@ -207,7 +207,7 @@ GET /aqsr-alert?current-day=true&lat=51.4818&long=-3.1763
 2. All monitoring site IDs for that region are retrieved from the in-memory site-region cache
 3. The Ricardo AQSR alerts feed is fetched with `start-date` = yesterday's UK-local date (`Europe/London`) and `end-date` = today's UK-local date (both `yyyy-mm-dd`), narrowing the upstream response to the rolling 24-hour window. When `RICARDO_API_USE_MOCK=true`, the mock response is returned to the caller after the real call is logged.
 4. Alerts are filtered to those where the site ID matches the region's sites, the alert is confirmed (`alertLevel=true` or `informationLevel=true`), and the date is within the last 24 hours (precise millisecond check)
-5. Each alert's `alert-started` timestamp is passed through `applyOffsetToTimestamp` (see below) before being returned
+5. Each alert's `alert-started` timestamp is Ricardo's `date` value, returned unmodified
 
 ---
 
@@ -243,7 +243,7 @@ GET /aqsr-alert?start-date=2026-05-01&end-date=2026-05-08
     "concentration": 182.5,
     "monitoring-station-name": "Cardiff Centre",
     "region": "South East Wales",
-    "alert-started": "2026-05-08T10:00:00Z"
+    "alert-started": "2026-05-08T09:00:00+01:00"
   }
 ]
 ```
@@ -258,11 +258,7 @@ GET /aqsr-alert?start-date=2026-05-01&end-date=2026-05-08
 | `concentration`           | number \| null | Measured pollutant concentration for the breach, as reported by Ricardo; `null` if absent in the upstream record     |
 | `monitoring-station-name` | string \| null | Name of the monitoring station from Ricardo site metadata; `null` if not cached                                      |
 | `region`                  | string \| null | Region resolved from the site's coordinates; `null` if not in cache                                                  |
-| `alert-started`           | string         | Ricardo's alert timestamp adjusted by `applyOffsetToTimestamp` (see below) — reflects local clock time               |
-
-**`alert-started` timestamp adjustment**
-
-Ricardo returns timestamps with a UTC offset, e.g. `"2026-05-08T09:00:00+01:00"` (09:00 in a UTC+1 zone). `applyOffsetToTimestamp` (in `dateRangeUtils.js`) adds the offset onto the time and re-labels the result as `Z`, so `09:00+01:00` becomes `"2026-05-08T10:00:00Z"` — the correct local wall-clock value without a misleading offset suffix. Timestamps with no offset, or a `+00:00` offset, are returned unchanged. This adjustment is applied only to `/aqsr-alert` responses (both modes) — the `/daqi-alert` endpoint returns Ricardo's `date` unmodified.
+| `alert-started`           | string         | Ricardo's alert timestamp (`date`), returned unmodified — same as `/daqi-alert`                                      |
 
 **Validation errors (400):**
 
