@@ -53,7 +53,8 @@ describe('locationUtils', () => {
     })
 
     it('should handle non-string input', () => {
-      expect(normalizeLocation(123)).toBe(123)
+      const input = 123
+      expect(Object.is(normalizeLocation(input), input)).toBe(true)
     })
   })
 
